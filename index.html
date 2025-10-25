@@ -16,7 +16,7 @@
 
   <body class="h-full w-full bg-black text-white overflow-hidden relative">
     <main class="h-full w-full relative">
-      <!-- Camera feed (source for all modes) -->
+      <!-- Live camera feed -->
       <video
         id="cameraFeed"
         class="absolute inset-0 h-full w-full object-cover"
@@ -25,13 +25,13 @@
         muted
       ></video>
 
-      <!-- Canvas where we render effects -->
+      <!-- Canvas where we draw all modes -->
       <canvas
         id="processedView"
         class="absolute inset-0 h-full w-full object-cover"
       ></canvas>
 
-      <!-- Overlays to make text readable -->
+      <!-- Top/bottom readability gradients -->
       <div
         class="pointer-events-none absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-black/70 via-black/20 to-transparent"
       ></div>
@@ -39,7 +39,7 @@
         class="pointer-events-none absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/80 via-black/30 to-transparent"
       ></div>
 
-      <!-- Caption / mode description -->
+      <!-- Caption / info trigger -->
       <section
         id="modeCaption"
         class="absolute top-6 left-1/2 -translate-x-1/2 max-w-[90%] text-center"
@@ -81,19 +81,28 @@
             id="modeSelect"
             class="w-full bg-black/50 text-white text-sm border border-white/20 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-white/30"
           >
+            <!-- Baseline / field loss / clarity -->
             <option value="normal">Normal</option>
             <option value="noColor">No Color</option>
             <option value="tunnel">Tunnel Vision</option>
             <option value="central">Central Loss</option>
             <option value="haze">Cataract / Haze</option>
             <option value="patchy">Patchy Vision</option>
-            <option value="colorShift">Red-Green Shift</option>
-            <option value="myopia">Uncorrected Myopia</option>
-            <option value="hyperopia">Uncorrected Hyperopia</option>
-            <option value="edge">Edge Map</option>
+
+            <!-- Color vision differences -->
+            <option value="deuteranomaly">Deuteranomaly</option>
+            <option value="protanomaly">Protanomaly</option>
+            <option value="deuteranopia">Deuteranopia</option>
+            <option value="protanopia">Protanopia</option>
+            <option value="tritanomaly">Tritanomaly</option>
+            <option value="tritanopia">Tritanopia</option>
+
+            <!-- Impairment -->
+            <option value="alcohol">Alcohol Impairment</option>
           </select>
         </div>
 
+        <!-- Disclaimer -->
         <p
           id="disclaimer"
           class="text-[0.7rem] text-white/50 text-center leading-tight max-w-[320px] font-light"

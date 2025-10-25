@@ -97,7 +97,6 @@ What you see: No functional blue cones. Blues don’t look like blue anymore; pu
 Why it matters: UI using blue for “links / primary actions” becomes unreadable in the way you expect it.
 
 
-### 13. Cat Vision 🐈
+### 13. Predator
 
-What you see: Slight blur (cats have lower fine detail than humans), cooler/greenish tint (cats perceive fewer colors, roughly more blue/green biased), and a lifted low-light brightness.
-Feels like “twilight hunter mode.”
+What you see: Moving objects glow in “heat map” colors (purple → red → orange → yellow/white). Static background disappears.

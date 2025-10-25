@@ -21,19 +21,13 @@ const modalBodyEl = document.getElementById("modalBody");
 // =======================================================
 // State
 // =======================================================
-
-// store last frame for "motion" mode
-let prevFrameData = null;
-
-// animated blotches for patchy vision
-const blotches = createBlotches(6); // tweak count
-
-// active mode key
 let activeModeKey = "normal";
 
-// camera dimensions
 let vidW = 640;
 let vidH = 480;
+
+// patchy vision blotches
+const blotches = createBlotches(6);
 
 // =======================================================
 // Mode definitions
@@ -63,15 +57,15 @@ const MODES = {
   central: {
     title: "Central Loss",
     subtitle:
-      "Simulating central blind spot (like advanced macular degeneration).",
+      "Center of gaze is obscured (like advanced macular degeneration).",
     longDescription:
-      "The center of your gaze is blurred or missing. Reading and face recognition become difficult, even if peripheral motion is still visible.",
+      "The middle of your view is blurred or missing. Reading and face recognition become difficult, even if you still detect motion around you.",
   },
 
   haze: {
     title: "Cataract / Haze",
     subtitle:
-      "Cloudy, low-contrast view with glare and bloom around lights.",
+      "Cloudy, low-contrast view with glare and light blooming.",
     longDescription:
       "Cataract-like haze lowers clarity and adds glare. It can feel like looking through a foggy lens where bright lights scatter.",
   },
@@ -79,9 +73,9 @@ const MODES = {
   patchy: {
     title: "Patchy Vision",
     subtitle:
-      "Dark blotches obscure parts of the scene (diabetic retinopathy-like).",
+      "Dark blotches obscure parts of the scene (retinopathy-like).",
     longDescription:
-      "Irregular dark spots partially block the view. Letters or faces can be missing in chunks, making reading and recognition very hard.",
+      "Irregular dark areas block or distort parts of what you see. Letters or faces can be missing in chunks, making recognition hard.",
   },
 
   colorShift: {
@@ -91,20 +85,26 @@ const MODES = {
       "In common red-green color blindness, reds and greens can appear similar. Color-coded warnings and signals become harder to interpret.",
   },
 
+  myopia: {
+    title: "Uncorrected Myopia",
+    subtitle: "Distant detail is soft and hard to read.",
+    longDescription:
+      "Without correction for myopia (nearsightedness), objects farther away appear blurry. Reading signs across the street or recognizing faces at distance becomes difficult.",
+  },
+
+  hyperopia: {
+    title: "Uncorrected Hyperopia",
+    subtitle: "Close-up content feels slightly out of focus and tiring.",
+    longDescription:
+      "With hyperopia (farsightedness), near work like reading a phone or label can feel blurry or strained. It often improves when you hold things farther away.",
+  },
+
   edge: {
     title: "Edge Map",
     subtitle:
-      "Perception experiment: only high-contrast edges are visible.",
+      "Only high-contrast edges are visible, like a wireframe world.",
     longDescription:
-      "Your visual system relies on edges to segment objects. Here we amplify edges and discard interior detail, creating a wireframe-like world.",
-  },
-
-  motion: {
-    title: "Motion Only",
-    subtitle:
-      "Perception experiment: highlighting only moving areas.",
-    longDescription:
-      "Static background fades out while movement shows up as bright ghosts. This illustrates how attention locks onto change first.",
+      "Your visual system relies on edges to separate objects from the background. Here we amplify edges and discard interior detail.",
   },
 };
 
@@ -119,7 +119,6 @@ async function initCamera() {
     });
     videoEl.srcObject = stream;
 
-    // We need actual video size to size the canvas
     videoEl.addEventListener("loadedmetadata", () => {
       vidW = videoEl.videoWidth || 640;
       vidH = videoEl.videoHeight || 480;
@@ -127,7 +126,7 @@ async function initCamera() {
     });
   } catch (err) {
     console.error("Camera access failed:", err);
-    // TODO: show fallback message in UI if needed
+    // TODO: show graceful UI fallback
   }
 }
 
@@ -139,16 +138,15 @@ function resizeCanvas() {
 }
 
 // =======================================================
-// Helpers: blotches for "patchy vision"
+// Patchy vision helpers
 // =======================================================
 function createBlotches(count) {
   const arr = [];
   for (let i = 0; i < count; i++) {
     arr.push({
-      // position as %, we'll convert in draw loop
       xPct: Math.random(),
       yPct: Math.random(),
-      rPct: 0.08 + Math.random() * 0.12, // radius ~8%-20% of min dimension
+      rPct: 0.08 + Math.random() * 0.12,
       dx: (Math.random() - 0.5) * 0.0005,
       dy: (Math.random() - 0.5) * 0.0005,
     });
@@ -160,51 +158,122 @@ function updateBlotches() {
   blotches.forEach((b) => {
     b.xPct += b.dx;
     b.yPct += b.dy;
-
-    // bounce off edges a bit
     if (b.xPct < 0 || b.xPct > 1) b.dx *= -1;
     if (b.yPct < 0 || b.yPct > 1) b.dy *= -1;
-
-    // clamp
     b.xPct = Math.max(0, Math.min(1, b.xPct));
     b.yPct = Math.max(0, Math.min(1, b.yPct));
   });
 }
 
 // =======================================================
-// Image processing helpers
+// Pixel transforms
 // =======================================================
-
-// convert frame to grayscale in-place
 function toGrayscale(data) {
-  // data = Uint8ClampedArray [r,g,b,a,...]
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i];
     const g = data[i + 1];
     const b = data[i + 2];
-    // luminance approx
     const gray = 0.299 * r + 0.587 * g + 0.114 * b;
     data[i] = data[i + 1] = data[i + 2] = gray;
   }
 }
 
-// cataract-like: blur is expensive to do "properly" per pixel.
-// We'll simulate haze: reduce contrast, slightly brighten, soft global blur using context filter.
+function applyRedGreenShift(data) {
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const avgRG = (r + g) / 2;
+    data[i] = avgRG;
+    data[i + 1] = avgRG * 0.9;
+    data[i + 2] = b;
+  }
+}
+
+// Sobel edge detector
+function sobelEdge(data, w, h) {
+  const gray = new Float32Array(w * h);
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const y = 0.299 * r + 0.587 * g + 0.114 * b;
+    gray[i / 4] = y;
+  }
+
+  const gxKernel = [-1, 0, 1, -2, 0, 2, -1, 0, 1];
+  const gyKernel = [-1, -2, -1, 0, 0, 0, 1, 2, 1];
+
+  const out = new Uint8ClampedArray(w * h * 4);
+
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const idx = y * w + x;
+
+      const p00 = gray[idx - w - 1];
+      const p01 = gray[idx - w];
+      const p02 = gray[idx - w + 1];
+
+      const p10 = gray[idx - 1];
+      const p11 = gray[idx];
+      const p12 = gray[idx + 1];
+
+      const p20 = gray[idx + w - 1];
+      const p21 = gray[idx + w];
+      const p22 = gray[idx + w + 1];
+
+      const gx =
+        p00 * gxKernel[0] +
+        p01 * gxKernel[1] +
+        p02 * gxKernel[2] +
+        p10 * gxKernel[3] +
+        p11 * gxKernel[4] +
+        p12 * gxKernel[5] +
+        p20 * gxKernel[6] +
+        p21 * gxKernel[7] +
+        p22 * gxKernel[8];
+
+      const gy =
+        p00 * gyKernel[0] +
+        p01 * gyKernel[1] +
+        p02 * gyKernel[2] +
+        p10 * gyKernel[3] +
+        p11 * gyKernel[4] +
+        p12 * gyKernel[5] +
+        p20 * gyKernel[6] +
+        p21 * gyKernel[7] +
+        p22 * gyKernel[8];
+
+      const mag = Math.sqrt(gx * gx + gy * gy);
+      const edgeVal = mag > 100 ? 255 : 0;
+
+      const o = idx * 4;
+      out[o] = edgeVal;
+      out[o + 1] = edgeVal;
+      out[o + 2] = edgeVal;
+      out[o + 3] = 255;
+    }
+  }
+
+  return out;
+}
+
+// =======================================================
+// Visual overlay helpers
+// =======================================================
+
 function drawHazeFrame() {
-  // We'll cheat using canvas filters for now.
-  // 1. draw raw frame first
+  // blurry / low-contrast / slight bloom
   ctx.filter = "blur(2px) brightness(1.1) contrast(0.6)";
   ctx.drawImage(videoEl, 0, 0, vidW, vidH);
   ctx.filter = "none";
 
-  // overlay "fog"
+  // faint fog overlay
   ctx.fillStyle = "rgba(255,255,255,0.08)";
   ctx.fillRect(0, 0, vidW, vidH);
 }
 
-// tunnel vision: darken periphery
 function applyTunnelMask() {
-  // radial gradient transparent center -> black edges
   const radius = Math.min(vidW, vidH) * 0.4;
   const grad = ctx.createRadialGradient(
     vidW / 2,
@@ -220,10 +289,8 @@ function applyTunnelMask() {
   ctx.fillRect(0, 0, vidW, vidH);
 }
 
-// central loss: blur/obscure center only
-function applyCentralMask() {
+function applyCentralOcclusion() {
   const radius = Math.min(vidW, vidH) * 0.3;
-  // We'll draw a blurred-ish circle by drawing a semi-opaque gray circle
   const grad = ctx.createRadialGradient(
     vidW / 2,
     vidH / 2,
@@ -240,11 +307,8 @@ function applyCentralMask() {
   ctx.fill();
 }
 
-// patchy vision: draw random blotches
 function applyPatchyMask() {
   updateBlotches();
-  ctx.save();
-  ctx.fillStyle = "rgba(0,0,0,0.6)";
   blotches.forEach((b) => {
     const x = b.xPct * vidW;
     const y = b.yPct * vidH;
@@ -258,146 +322,79 @@ function applyPatchyMask() {
     ctx.arc(x, y, r, 0, Math.PI * 2);
     ctx.fill();
   });
+}
+
+// Uncorrected myopia: global softness / blur / low contrast
+function drawMyopiaFrame() {
+  ctx.filter = "blur(2px) contrast(0.8) brightness(0.95)";
+  ctx.drawImage(videoEl, 0, 0, vidW, vidH);
+  ctx.filter = "none";
+
+  // subtle vignette to hint "out of glasses"
+  const grad = ctx.createRadialGradient(
+    vidW / 2,
+    vidH / 2,
+    Math.min(vidW, vidH) * 0.3,
+    vidW / 2,
+    vidH / 2,
+    Math.min(vidW, vidH) * 0.7
+  );
+  grad.addColorStop(0, "rgba(0,0,0,0)");
+  grad.addColorStop(1, "rgba(0,0,0,0.4)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, vidW, vidH);
+}
+
+// Uncorrected hyperopia: blur in center (near focus strain)
+function drawHyperopiaFrame() {
+  // 1. draw sharp base frame
+  ctx.drawImage(videoEl, 0, 0, vidW, vidH);
+
+  // 2. overlay a blurred circle in the center to simulate
+  // "I can't focus on what's right in front of me"
+  const radius = Math.min(vidW, vidH) * 0.28;
+
+  // We'll create an offscreen canvas to draw a blurred version of the frame
+  const off = document.createElement("canvas");
+  off.width = vidW;
+  off.height = vidH;
+  const offCtx = off.getContext("2d");
+
+  offCtx.filter = "blur(3px) brightness(0.95) contrast(0.9)";
+  offCtx.drawImage(videoEl, 0, 0, vidW, vidH);
+  offCtx.filter = "none";
+
+  // Now mask only the center region from that blurred version
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(vidW / 2, vidH / 2, radius, 0, Math.PI * 2);
+  ctx.closePath();
+  ctx.clip();
+
+  ctx.drawImage(off, 0, 0, vidW, vidH);
   ctx.restore();
-}
 
-// red-green shift approximation
-// We'll aggressively reduce difference between R and G.
-// Note: super simplified protan/deutan mashup just to get the idea.
-function applyRedGreenShift(data) {
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
-
-    // collapse r/g toward their average, keep blue mostly
-    const avgRG = (r + g) / 2;
-    data[i] = avgRG; // R channel
-    data[i + 1] = avgRG * 0.9; // G channel slightly biased
-    data[i + 2] = b; // keep blue for differentiation
-  }
-}
-
-// edge map (Sobel)
-// We'll work on grayscale first, then compute edges, then draw result back.
-function sobelEdge(data, w, h) {
-  // data: Uint8ClampedArray (RGBA)
-  // We'll first build a gray buffer
-  const gray = new Float32Array(w * h);
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
-    const y = 0.299 * r + 0.587 * g + 0.114 * b;
-    gray[i / 4] = y;
-  }
-
-  // Sobel kernels
-  const gxKernel = [-1, 0, 1, -2, 0, 2, -1, 0, 1];
-  const gyKernel = [-1, -2, -1, 0, 0, 0, 1, 2, 1];
-
-  const out = new Uint8ClampedArray(w * h * 4);
-
-  // avoid outer border to keep it simple
-  for (let y = 1; y < h - 1; y++) {
-    for (let x = 1; x < w - 1; x++) {
-      // index in gray
-      const idx = y * w + x;
-
-      // sample neighborhood
-      // row above
-      const p00 = gray[idx - w - 1];
-      const p01 = gray[idx - w];
-      const p02 = gray[idx - w + 1];
-      // row mid
-      const p10 = gray[idx - 1];
-      const p11 = gray[idx];
-      const p12 = gray[idx + 1];
-      // row below
-      const p20 = gray[idx + w - 1];
-      const p21 = gray[idx + w];
-      const p22 = gray[idx + w + 1];
-
-      // Gx
-      const gx =
-        p00 * gxKernel[0] +
-        p01 * gxKernel[1] +
-        p02 * gxKernel[2] +
-        p10 * gxKernel[3] +
-        p11 * gxKernel[4] +
-        p12 * gxKernel[5] +
-        p20 * gxKernel[6] +
-        p21 * gxKernel[7] +
-        p22 * gxKernel[8];
-
-      // Gy
-      const gy =
-        p00 * gyKernel[0] +
-        p01 * gyKernel[1] +
-        p02 * gyKernel[2] +
-        p10 * gyKernel[3] +
-        p11 * gyKernel[4] +
-        p12 * gyKernel[5] +
-        p20 * gyKernel[6] +
-        p21 * gyKernel[7] +
-        p22 * gyKernel[8];
-
-      // edge magnitude
-      const mag = Math.sqrt(gx * gx + gy * gy);
-
-      // normalize-ish
-      const edgeVal = mag > 100 ? 255 : 0;
-
-      const o = idx * 4;
-      out[o] = edgeVal; // R
-      out[o + 1] = edgeVal; // G
-      out[o + 2] = edgeVal; // B
-      out[o + 3] = 255; // A
-    }
-  }
-
-  return out;
-}
-
-// motion-only: compare current frame to prevFrameData.
-// show white where difference is large, else black.
-function motionMask(curr, prev, threshold = 30) {
-  const out = new Uint8ClampedArray(curr.length);
-  for (let i = 0; i < curr.length; i += 4) {
-    // brightness of current vs prev
-    const cr = curr[i],
-      cg = curr[i + 1],
-      cb = curr[i + 2];
-    const pr = prev[i],
-      pg = prev[i + 1],
-      pb = prev[i + 2];
-
-    const cLum = 0.299 * cr + 0.587 * cg + 0.114 * cb;
-    const pLum = 0.299 * pr + 0.587 * pg + 0.114 * pb;
-
-    const diff = Math.abs(cLum - pLum);
-
-    if (diff > threshold) {
-      out[i] = 255;
-      out[i + 1] = 255;
-      out[i + 2] = 255;
-      out[i + 3] = 255;
-    } else {
-      out[i] = 0;
-      out[i + 1] = 0;
-      out[i + 2] = 0;
-      out[i + 3] = 255;
-    }
-  }
-  return out;
+  // soft edge feather: draw translucent ring so it's not a hard cut
+  const feather = ctx.createRadialGradient(
+    vidW / 2,
+    vidH / 2,
+    radius * 0.7,
+    vidW / 2,
+    vidH / 2,
+    radius
+  );
+  feather.addColorStop(0, "rgba(0,0,0,0)");
+  feather.addColorStop(1, "rgba(0,0,0,0.3)");
+  ctx.fillStyle = feather;
+  ctx.beginPath();
+  ctx.arc(vidW / 2, vidH / 2, radius, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 // =======================================================
 // Rendering per mode
 // =======================================================
-
 function renderNormal() {
-  // Just draw the live frame as-is
   ctx.drawImage(videoEl, 0, 0, vidW, vidH);
 }
 
@@ -415,7 +412,7 @@ function renderTunnel() {
 
 function renderCentralLoss() {
   ctx.drawImage(videoEl, 0, 0, vidW, vidH);
-  applyCentralMask();
+  applyCentralOcclusion();
 }
 
 function renderHaze() {
@@ -425,7 +422,7 @@ function renderHaze() {
 function renderPatchy() {
   ctx.drawImage(videoEl, 0, 0, vidW, vidH);
 
-  // Slight global softening to hint lower contrast
+  // slight global veil
   ctx.fillStyle = "rgba(255,255,255,0.03)";
   ctx.fillRect(0, 0, vidW, vidH);
 
@@ -439,41 +436,26 @@ function renderColorShift() {
   ctx.putImageData(frame, 0, 0);
 }
 
+function renderMyopia() {
+  drawMyopiaFrame();
+}
+
+function renderHyperopia() {
+  drawHyperopiaFrame();
+}
+
 function renderEdgeMap() {
   ctx.drawImage(videoEl, 0, 0, vidW, vidH);
   const frame = ctx.getImageData(0, 0, vidW, vidH);
   const edged = sobelEdge(frame.data, vidW, vidH);
   const outImg = new ImageData(edged, vidW, vidH);
 
-  // Black background first
   ctx.fillStyle = "black";
   ctx.fillRect(0, 0, vidW, vidH);
-
   ctx.putImageData(outImg, 0, 0);
 }
 
-function renderMotionOnly() {
-  ctx.drawImage(videoEl, 0, 0, vidW, vidH);
-  const frame = ctx.getImageData(0, 0, vidW, vidH);
-
-  if (!prevFrameData) {
-    // first frame: just store and draw black
-    prevFrameData = new Uint8ClampedArray(frame.data);
-    ctx.fillStyle = "black";
-    ctx.fillRect(0, 0, vidW, vidH);
-    return;
-  }
-
-  const motionImg = motionMask(frame.data, prevFrameData, 30);
-  const outImg = new ImageData(motionImg, vidW, vidH);
-
-  ctx.putImageData(outImg, 0, 0);
-
-  // update prev
-  prevFrameData.set(frame.data);
-}
-
-// dispatcher
+// dispatch
 function renderActiveMode() {
   switch (activeModeKey) {
     case "normal":
@@ -497,11 +479,14 @@ function renderActiveMode() {
     case "colorShift":
       renderColorShift();
       break;
+    case "myopia":
+      renderMyopia();
+      break;
+    case "hyperopia":
+      renderHyperopia();
+      break;
     case "edge":
       renderEdgeMap();
-      break;
-    case "motion":
-      renderMotionOnly();
       break;
     default:
       renderNormal();
@@ -510,11 +495,10 @@ function renderActiveMode() {
 }
 
 // =======================================================
-// Main animation loop
+// Animation loop
 // =======================================================
 function tick() {
   if (videoEl.readyState >= 2) {
-    // We only draw when video has data
     renderActiveMode();
   }
   requestAnimationFrame(tick);
@@ -526,31 +510,24 @@ function tick() {
 function applyMode(modeKey) {
   const mode = MODES[modeKey];
   if (!mode) return;
-
   activeModeKey = modeKey;
 
-  // update caption + modal text
   captionTitleEl.textContent = mode.title;
   captionSubtitleEl.textContent = mode.subtitle;
+
   modalTitleEl.textContent = mode.title;
   modalBodyEl.textContent = mode.longDescription;
-
-  // reset prev frame for motion mode when switching into it
-  if (modeKey === "motion") {
-    prevFrameData = null;
-  }
 }
 
 function openModal() {
   infoModalEl.classList.remove("hidden");
 }
-
 function closeModal() {
   infoModalEl.classList.add("hidden");
 }
 
 // =======================================================
-// Event listeners
+// Events
 // =======================================================
 modeSelectEl.addEventListener("change", (e) => {
   applyMode(e.target.value);
@@ -559,7 +536,6 @@ modeSelectEl.addEventListener("change", (e) => {
 infoButtonEl.addEventListener("click", openModal);
 closeModalBtnEl.addEventListener("click", closeModal);
 
-// close modal on backdrop tap
 infoModalEl.addEventListener("click", (e) => {
   if (e.target === infoModalEl) closeModal();
 });

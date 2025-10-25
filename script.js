@@ -26,16 +26,11 @@ let activeModeKey = "normal";
 let vidW = 640;
 let vidH = 480;
 
-// used in patchy vision (retinopathy-like)
+// used in patchy vision (diabetic retinopathy–like)
 const blotches = createBlotches(6);
-
-// used in alcohol mode ghosting
-let lastFrameAlcohol = null;
-let alcoholTime = 0; // to animate sway
 
 // =======================================================
 // Mode metadata
-// (title, subtitle in caption, and longDescription in modal)
 // =======================================================
 const MODES = {
   normal: {
@@ -96,7 +91,7 @@ const MODES = {
     subtitle:
       "Reduced red sensitivity. Reds look weaker and less vivid.",
     longDescription:
-      "In protanomaly, the 'red' channel is less effective. Reds can appear darker or brownish, and differences between red and green are harder to see.",
+      "In protanomaly, the red channel is less effective. Reds can appear darker or brownish, and differences between red and green are harder to see.",
   },
 
   deuteranopia: {
@@ -131,12 +126,12 @@ const MODES = {
       "With tritanopia, you essentially don't get proper blue signals. Blues can shift toward greenish or grayish, and purple/yellow contrasts get distorted.",
   },
 
-  alcohol: {
-    title: "Alcohol Impairment",
+  cat: {
+    title: "Cat Vision",
     subtitle:
-      "Blurred, doubled, and unstable. Your horizon drifts.",
+      "Dim-world boost, muted colors, softer detail.",
     longDescription:
-      "Alcohol impairs clarity, contrast, and visual stability. This simulation shows softness, ghosting, and slight sway. It's an illustration of risk, not a measurement of intoxication.",
+      "Cats see better in low light, but with less color variety and less sharp detail. This mode brightens shadows, reduces fine resolution, and shifts color toward a cooler blue/green range.",
   },
 };
 
@@ -158,7 +153,7 @@ async function initCamera() {
     });
   } catch (err) {
     console.error("Camera access failed:", err);
-    // TODO: fallback UI if needed
+    // could display a user-friendly message here
   }
 }
 
@@ -170,7 +165,7 @@ function resizeCanvas() {
 }
 
 // =======================================================
-// Utility: Patchy vision blobs (retinopathy-like floaters / occlusions)
+// Patchy vision helpers
 // =======================================================
 function createBlotches(count) {
   const arr = [];
@@ -198,7 +193,7 @@ function updateBlotches() {
 }
 
 // =======================================================
-// Pixel transforms / helpers
+// Pixel transforms
 // =======================================================
 function toGrayscale(data) {
   for (let i = 0; i < data.length; i += 4) {
@@ -212,11 +207,6 @@ function toGrayscale(data) {
 
 // generic matrix transform for color vision modes
 function applyMatrixTransform(data, mat) {
-  // mat = [
-  //   [rR, rG, rB],
-  //   [gR, gG, gB],
-  //   [bR, bG, bB]
-  // ]
   for (let i = 0; i < data.length; i += 4) {
     const R = data[i];
     const G = data[i + 1];
@@ -229,11 +219,10 @@ function applyMatrixTransform(data, mat) {
     data[i] = Rn;
     data[i + 1] = Gn;
     data[i + 2] = Bn;
-    // alpha unchanged
   }
 }
 
-// matrices for color vision differences (approximate simulation)
+// color vision simulation matrices (approximate, educational only)
 const MAT_DEUTERANOMALY = [
   [0.8, 0.2, 0.0],
   [0.258, 0.742, 0.0],
@@ -270,11 +259,30 @@ const MAT_TRITANOPIA = [
   [0.0, 0.475, 0.525],
 ];
 
+// "Cat Vision": boost low-light feel, mute reds, slight blur, cool tint.
+function applyCatTransform(data) {
+  for (let i = 0; i < data.length; i += 4) {
+    const R = data[i];
+    const G = data[i + 1];
+    const B = data[i + 2];
+
+    // reduce red channel influence, boost green/blue a bit
+    // also slightly boost brightness overall
+    const Rn = (R * 0.5 + G * 0.2 + B * 0.1) * 1.1;
+    const Gn = (R * 0.2 + G * 0.8 + B * 0.2) * 1.1;
+    const Bn = (R * 0.1 + G * 0.3 + B * 0.9) * 1.1;
+
+    data[i] = Rn;
+    data[i + 1] = Gn;
+    data[i + 2] = Bn;
+  }
+}
+
 // =======================================================
 // Visual overlay helpers
 // =======================================================
 
-// cataract / haze (global blur, glare, low contrast)
+// cataract/haze
 function drawHazeFrame() {
   ctx.filter = "blur(2px) brightness(1.1) contrast(0.6)";
   ctx.drawImage(videoEl, 0, 0, vidW, vidH);
@@ -284,7 +292,7 @@ function drawHazeFrame() {
   ctx.fillRect(0, 0, vidW, vidH);
 }
 
-// tunnel vision (dark periphery)
+// tunnel vision
 function applyTunnelMask() {
   const radius = Math.min(vidW, vidH) * 0.4;
   const grad = ctx.createRadialGradient(
@@ -301,7 +309,7 @@ function applyTunnelMask() {
   ctx.fillRect(0, 0, vidW, vidH);
 }
 
-// central loss (occluded/blurry center)
+// central blind/blurred spot
 function applyCentralOcclusion() {
   const radius = Math.min(vidW, vidH) * 0.3;
   const grad = ctx.createRadialGradient(
@@ -320,7 +328,7 @@ function applyCentralOcclusion() {
   ctx.fill();
 }
 
-// retinopathy-like blotches
+// patchy retinopathy-style occlusions
 function applyPatchyMask() {
   updateBlotches();
   blotches.forEach((b) => {
@@ -338,50 +346,28 @@ function applyPatchyMask() {
   });
 }
 
-// alcohol impairment effect
-// - blur/low contrast
-// - ghosted double image from previous frame
-// - slow sway of horizon
-// - vignette
-function drawAlcoholFrame() {
-  alcoholTime += 0.016; // ~60fps step, doesn't need to be exact
-  const swayAngle = Math.sin(alcoholTime * 0.5) * 0.03; // radians ~1.7deg
-  const swayOffsetX = Math.sin(alcoholTime * 0.8) * 3;  // px wobble
-  const swayOffsetY = Math.cos(alcoholTime * 0.6) * 2;
-
-  // We'll render onto an offscreen canvas with transforms,
-  // then draw that back to main ctx for vignette/ghost.
+// Cat Vision renderer helper (blur + tint + slight vignette)
+function drawCatFrame() {
+  // First draw a slightly blurred, low-acuity frame
   const off = document.createElement("canvas");
   off.width = vidW;
   off.height = vidH;
   const offCtx = off.getContext("2d");
 
-  // base frame: slightly blurry / low contrast
-  offCtx.filter = "blur(2px) contrast(0.8) brightness(0.95)";
-  offCtx.save();
-  offCtx.translate(vidW / 2, vidH / 2);
-  offCtx.rotate(swayAngle);
-  offCtx.translate(-vidW / 2 + swayOffsetX, -vidH / 2 + swayOffsetY);
+  // Cat acuity is lower than humans -> blur a bit
+  offCtx.filter = "blur(2px) brightness(1.1) contrast(0.9)";
   offCtx.drawImage(videoEl, 0, 0, vidW, vidH);
-  offCtx.restore();
   offCtx.filter = "none";
 
-  // ghost of previous frame slightly offset
-  if (lastFrameAlcohol) {
-    offCtx.save();
-    offCtx.globalAlpha = 0.25;
-    offCtx.translate(2, 2); // slight offset = double vision feel
-    offCtx.putImageData(lastFrameAlcohol, 0, 0);
-    offCtx.restore();
-  }
+  // Grab pixels, shift toward blue/green, mute reds
+  let frame = offCtx.getImageData(0, 0, vidW, vidH);
+  applyCatTransform(frame.data);
+  offCtx.putImageData(frame, 0, 0);
 
-  // draw offscreen result to main ctx
+  // Draw processed frame to main canvas
   ctx.drawImage(off, 0, 0, vidW, vidH);
 
-  // grab current frame for next time's ghost
-  lastFrameAlcohol = offCtx.getImageData(0, 0, vidW, vidH);
-
-  // vignette/darken edges
+  // Mild twilight-style vignette (cats are crepuscular hunters)
   const vignette = ctx.createRadialGradient(
     vidW / 2,
     vidH / 2,
@@ -391,17 +377,9 @@ function drawAlcoholFrame() {
     Math.min(vidW, vidH) * 0.8
   );
   vignette.addColorStop(0, "rgba(0,0,0,0)");
-  vignette.addColorStop(1, "rgba(0,0,0,0.4)");
+  vignette.addColorStop(1, "rgba(0,0,0,0.3)");
   ctx.fillStyle = vignette;
   ctx.fillRect(0, 0, vidW, vidH);
-}
-
-// helper for all colorblind modes
-function renderColorBlind(matrix) {
-  ctx.drawImage(videoEl, 0, 0, vidW, vidH);
-  const frame = ctx.getImageData(0, 0, vidW, vidH);
-  applyMatrixTransform(frame.data, matrix);
-  ctx.putImageData(frame, 0, 0);
 }
 
 // =======================================================
@@ -434,13 +412,15 @@ function renderHaze() {
 
 function renderPatchy() {
   ctx.drawImage(videoEl, 0, 0, vidW, vidH);
-  // slight global veil
+
+  // slight milkiness to drop clarity a touch
   ctx.fillStyle = "rgba(255,255,255,0.03)";
   ctx.fillRect(0, 0, vidW, vidH);
+
   applyPatchyMask();
 }
 
-// color vision modes
+// Color deficiency modes: reuse a generic renderer
 function renderDeuteranomaly() {
   renderColorBlind(MAT_DEUTERANOMALY);
 }
@@ -460,56 +440,52 @@ function renderTritanopia() {
   renderColorBlind(MAT_TRITANOPIA);
 }
 
-// alcohol impairment
-function renderAlcohol() {
-  drawAlcoholFrame();
+function renderColorBlind(matrix) {
+  ctx.drawImage(videoEl, 0, 0, vidW, vidH);
+  const frame = ctx.getImageData(0, 0, vidW, vidH);
+  applyMatrixTransform(frame.data, matrix);
+  ctx.putImageData(frame, 0, 0);
 }
 
-// mode dispatcher
+// Cat Vision mode
+function renderCat() {
+  drawCatFrame();
+}
+
+// dispatch by mode
 function renderActiveMode() {
   switch (activeModeKey) {
     case "normal":
-      renderNormal();
-      break;
+      renderNormal(); break;
     case "noColor":
-      renderNoColor();
-      break;
+      renderNoColor(); break;
     case "tunnel":
-      renderTunnel();
-      break;
+      renderTunnel(); break;
     case "central":
-      renderCentralLoss();
-      break;
+      renderCentralLoss(); break;
     case "haze":
-      renderHaze();
-      break;
+      renderHaze(); break;
     case "patchy":
-      renderPatchy();
-      break;
+      renderPatchy(); break;
+
     case "deuteranomaly":
-      renderDeuteranomaly();
-      break;
+      renderDeuteranomaly(); break;
     case "protanomaly":
-      renderProtanomaly();
-      break;
+      renderProtanomaly(); break;
     case "deuteranopia":
-      renderDeuteranopia();
-      break;
+      renderDeuteranopia(); break;
     case "protanopia":
-      renderProtanopia();
-      break;
+      renderProtanopia(); break;
     case "tritanomaly":
-      renderTritanomaly();
-      break;
+      renderTritanomaly(); break;
     case "tritanopia":
-      renderTritanopia();
-      break;
-    case "alcohol":
-      renderAlcohol();
-      break;
+      renderTritanopia(); break;
+
+    case "cat":
+      renderCat(); break;
+
     default:
-      renderNormal();
-      break;
+      renderNormal(); break;
   }
 }
 
@@ -537,12 +513,6 @@ function applyMode(modeKey) {
 
   modalTitleEl.textContent = mode.title;
   modalBodyEl.textContent = mode.longDescription;
-
-  // Reset alcohol ghost buffer when entering alcohol mode
-  if (modeKey === "alcohol") {
-    lastFrameAlcohol = null;
-    alcoholTime = 0;
-  }
 }
 
 function openModal() {

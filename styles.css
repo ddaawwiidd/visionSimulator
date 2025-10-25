@@ -1,5 +1,6 @@
 /* styles.css */
 
+/* (Kept for possible horizontal scrolling UIs if added later) */
 .scrollbar-none {
   -ms-overflow-style: none;
   scrollbar-width: none;
@@ -8,6 +9,7 @@
   display: none;
 }
 
+/* Fade helpers */
 .fade-in {
   opacity: 1;
   transition: opacity 0.3s ease;
@@ -17,6 +19,7 @@
   transition: opacity 0.3s ease;
 }
 
+/* For iOS safe areas if needed */
 .safe-bottom {
   padding-bottom: env(safe-area-inset-bottom);
 }

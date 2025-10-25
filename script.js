@@ -1,7 +1,7 @@
 // script.js
 
 // =======================================================
-// DOM refs
+// DOM references
 // =======================================================
 const videoEl = document.getElementById("cameraFeed");
 const canvasEl = document.getElementById("processedView");
@@ -19,18 +19,23 @@ const modalTitleEl = document.getElementById("modalTitle");
 const modalBodyEl = document.getElementById("modalBody");
 
 // =======================================================
-// State
+// Global state
 // =======================================================
 let activeModeKey = "normal";
 
 let vidW = 640;
 let vidH = 480;
 
-// patchy vision blotches
+// used in patchy vision (retinopathy-like)
 const blotches = createBlotches(6);
 
+// used in alcohol mode ghosting
+let lastFrameAlcohol = null;
+let alcoholTime = 0; // to animate sway
+
 // =======================================================
-// Mode definitions
+// Mode metadata
+// (title, subtitle in caption, and longDescription in modal)
 // =======================================================
 const MODES = {
   normal: {
@@ -51,7 +56,7 @@ const MODES = {
     title: "Tunnel Vision",
     subtitle: "Peripheral field loss similar to advanced glaucoma.",
     longDescription:
-      "Peripheral vision narrows, creating a 'tunnel' of clarity in the center. Spatial awareness and navigation become difficult.",
+      "Peripheral vision narrows, creating a 'tunnel' of clarity in the center. Spatial awareness and navigation become difficult and risky.",
   },
 
   central: {
@@ -59,15 +64,15 @@ const MODES = {
     subtitle:
       "Center of gaze is obscured (like advanced macular degeneration).",
     longDescription:
-      "The middle of your view is blurred or missing. Reading and face recognition become difficult, even if you still detect motion around you.",
+      "The middle of your view is blurred or missing. Reading text or recognizing faces directly ahead becomes very difficult.",
   },
 
   haze: {
     title: "Cataract / Haze",
     subtitle:
-      "Cloudy, low-contrast view with glare and light blooming.",
+      "Cloudy, low-contrast view with glare and blooming lights.",
     longDescription:
-      "Cataract-like haze lowers clarity and adds glare. It can feel like looking through a foggy lens where bright lights scatter.",
+      "Cataract-like haze lowers clarity and adds glare. Bright lights scatter. It can feel like looking through a fogged or dirty lens.",
   },
 
   patchy: {
@@ -75,36 +80,63 @@ const MODES = {
     subtitle:
       "Dark blotches obscure parts of the scene (retinopathy-like).",
     longDescription:
-      "Irregular dark areas block or distort parts of what you see. Letters or faces can be missing in chunks, making recognition hard.",
+      "Irregular dark areas can block or distort parts of what you see. Letters or faces might be 'missing in pieces,' making recognition hard.",
   },
 
-  colorShift: {
-    title: "Red-Green Shift",
-    subtitle: "Reduced distinction between reds and greens.",
-    longDescription:
-      "In common red-green color blindness, reds and greens can appear similar. Color-coded warnings and signals become harder to interpret.",
-  },
-
-  myopia: {
-    title: "Uncorrected Myopia",
-    subtitle: "Distant detail is soft and hard to read.",
-    longDescription:
-      "Without correction for myopia (nearsightedness), objects farther away appear blurry. Reading signs across the street or recognizing faces at distance becomes difficult.",
-  },
-
-  hyperopia: {
-    title: "Uncorrected Hyperopia",
-    subtitle: "Close-up content feels slightly out of focus and tiring.",
-    longDescription:
-      "With hyperopia (farsightedness), near work like reading a phone or label can feel blurry or strained. It often improves when you hold things farther away.",
-  },
-
-  edge: {
-    title: "Edge Map",
+  deuteranomaly: {
+    title: "Deuteranomaly",
     subtitle:
-      "Only high-contrast edges are visible, like a wireframe world.",
+      "Reduced green sensitivity. Green, yellow, red blend together.",
     longDescription:
-      "Your visual system relies on edges to separate objects from the background. Here we amplify edges and discard interior detail.",
+      "Deuteranomaly is the most common color vision deficiency. Greens can look dull or shift toward yellow/brown, and red-vs-green cues become less reliable.",
+  },
+
+  protanomaly: {
+    title: "Protanomaly",
+    subtitle:
+      "Reduced red sensitivity. Reds look weaker and less vivid.",
+    longDescription:
+      "In protanomaly, the 'red' channel is less effective. Reds can appear darker or brownish, and differences between red and green are harder to see.",
+  },
+
+  deuteranopia: {
+    title: "Deuteranopia",
+    subtitle:
+      "No functional green cones. Red and green collapse together.",
+    longDescription:
+      "With deuteranopia, the green channel is essentially missing. Greens no longer look distinctly green; reds and greens get confused into similar tones.",
+  },
+
+  protanopia: {
+    title: "Protanopia",
+    subtitle:
+      "No functional red cones. Reds can appear dim or gray.",
+    longDescription:
+      "With protanopia, the red channel is effectively missing. Warm colors lose their 'redness' and can be mistaken for darker or duller shades.",
+  },
+
+  tritanomaly: {
+    title: "Tritanomaly",
+    subtitle:
+      "Reduced blue sensitivity. Blue/green and yellow/red get harder.",
+    longDescription:
+      "In tritanomaly, blue cones are less sensitive. Differentiating blues from greens and yellows from reds becomes more difficult.",
+  },
+
+  tritanopia: {
+    title: "Tritanopia",
+    subtitle:
+      "No functional blue cones. Blues are lost as true blue.",
+    longDescription:
+      "With tritanopia, you essentially don't get proper blue signals. Blues can shift toward greenish or grayish, and purple/yellow contrasts get distorted.",
+  },
+
+  alcohol: {
+    title: "Alcohol Impairment",
+    subtitle:
+      "Blurred, doubled, and unstable. Your horizon drifts.",
+    longDescription:
+      "Alcohol impairs clarity, contrast, and visual stability. This simulation shows softness, ghosting, and slight sway. It's an illustration of risk, not a measurement of intoxication.",
   },
 };
 
@@ -126,7 +158,7 @@ async function initCamera() {
     });
   } catch (err) {
     console.error("Camera access failed:", err);
-    // TODO: show graceful UI fallback
+    // TODO: fallback UI if needed
   }
 }
 
@@ -138,7 +170,7 @@ function resizeCanvas() {
 }
 
 // =======================================================
-// Patchy vision helpers
+// Utility: Patchy vision blobs (retinopathy-like floaters / occlusions)
 // =======================================================
 function createBlotches(count) {
   const arr = [];
@@ -166,7 +198,7 @@ function updateBlotches() {
 }
 
 // =======================================================
-// Pixel transforms
+// Pixel transforms / helpers
 // =======================================================
 function toGrayscale(data) {
   for (let i = 0; i < data.length; i += 4) {
@@ -178,101 +210,81 @@ function toGrayscale(data) {
   }
 }
 
-function applyRedGreenShift(data) {
+// generic matrix transform for color vision modes
+function applyMatrixTransform(data, mat) {
+  // mat = [
+  //   [rR, rG, rB],
+  //   [gR, gG, gB],
+  //   [bR, bG, bB]
+  // ]
   for (let i = 0; i < data.length; i += 4) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
-    const avgRG = (r + g) / 2;
-    data[i] = avgRG;
-    data[i + 1] = avgRG * 0.9;
-    data[i + 2] = b;
+    const R = data[i];
+    const G = data[i + 1];
+    const B = data[i + 2];
+
+    const Rn = mat[0][0] * R + mat[0][1] * G + mat[0][2] * B;
+    const Gn = mat[1][0] * R + mat[1][1] * G + mat[1][2] * B;
+    const Bn = mat[2][0] * R + mat[2][1] * G + mat[2][2] * B;
+
+    data[i] = Rn;
+    data[i + 1] = Gn;
+    data[i + 2] = Bn;
+    // alpha unchanged
   }
 }
 
-// Sobel edge detector
-function sobelEdge(data, w, h) {
-  const gray = new Float32Array(w * h);
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
-    const y = 0.299 * r + 0.587 * g + 0.114 * b;
-    gray[i / 4] = y;
-  }
+// matrices for color vision differences (approximate simulation)
+const MAT_DEUTERANOMALY = [
+  [0.8, 0.2, 0.0],
+  [0.258, 0.742, 0.0],
+  [0.0, 0.0, 1.0],
+];
 
-  const gxKernel = [-1, 0, 1, -2, 0, 2, -1, 0, 1];
-  const gyKernel = [-1, -2, -1, 0, 0, 0, 1, 2, 1];
+const MAT_PROTANOMALY = [
+  [0.817, 0.183, 0.0],
+  [0.333, 0.667, 0.0],
+  [0.0, 0.0, 1.0],
+];
 
-  const out = new Uint8ClampedArray(w * h * 4);
+const MAT_DEUTERANOPIA = [
+  [0.625, 0.375, 0.0],
+  [0.7, 0.3, 0.0],
+  [0.0, 0.0, 1.0],
+];
 
-  for (let y = 1; y < h - 1; y++) {
-    for (let x = 1; x < w - 1; x++) {
-      const idx = y * w + x;
+const MAT_PROTANOPIA = [
+  [0.567, 0.433, 0.0],
+  [0.558, 0.442, 0.0],
+  [0.0, 0.0, 1.0],
+];
 
-      const p00 = gray[idx - w - 1];
-      const p01 = gray[idx - w];
-      const p02 = gray[idx - w + 1];
+const MAT_TRITANOMALY = [
+  [1.0, 0.0, 0.0],
+  [0.0, 0.817, 0.183],
+  [0.0, 0.333, 0.667],
+];
 
-      const p10 = gray[idx - 1];
-      const p11 = gray[idx];
-      const p12 = gray[idx + 1];
-
-      const p20 = gray[idx + w - 1];
-      const p21 = gray[idx + w];
-      const p22 = gray[idx + w + 1];
-
-      const gx =
-        p00 * gxKernel[0] +
-        p01 * gxKernel[1] +
-        p02 * gxKernel[2] +
-        p10 * gxKernel[3] +
-        p11 * gxKernel[4] +
-        p12 * gxKernel[5] +
-        p20 * gxKernel[6] +
-        p21 * gxKernel[7] +
-        p22 * gxKernel[8];
-
-      const gy =
-        p00 * gyKernel[0] +
-        p01 * gyKernel[1] +
-        p02 * gyKernel[2] +
-        p10 * gyKernel[3] +
-        p11 * gyKernel[4] +
-        p12 * gyKernel[5] +
-        p20 * gyKernel[6] +
-        p21 * gyKernel[7] +
-        p22 * gyKernel[8];
-
-      const mag = Math.sqrt(gx * gx + gy * gy);
-      const edgeVal = mag > 100 ? 255 : 0;
-
-      const o = idx * 4;
-      out[o] = edgeVal;
-      out[o + 1] = edgeVal;
-      out[o + 2] = edgeVal;
-      out[o + 3] = 255;
-    }
-  }
-
-  return out;
-}
+const MAT_TRITANOPIA = [
+  [0.95, 0.05, 0.0],
+  [0.0, 0.433, 0.567],
+  [0.0, 0.475, 0.525],
+];
 
 // =======================================================
 // Visual overlay helpers
 // =======================================================
 
+// cataract / haze (global blur, glare, low contrast)
 function drawHazeFrame() {
-  // blurry / low-contrast / slight bloom
   ctx.filter = "blur(2px) brightness(1.1) contrast(0.6)";
   ctx.drawImage(videoEl, 0, 0, vidW, vidH);
   ctx.filter = "none";
 
-  // faint fog overlay
   ctx.fillStyle = "rgba(255,255,255,0.08)";
   ctx.fillRect(0, 0, vidW, vidH);
 }
 
+// tunnel vision (dark periphery)
 function applyTunnelMask() {
   const radius = Math.min(vidW, vidH) * 0.4;
   const grad = ctx.createRadialGradient(
@@ -289,6 +301,7 @@ function applyTunnelMask() {
   ctx.fillRect(0, 0, vidW, vidH);
 }
 
+// central loss (occluded/blurry center)
 function applyCentralOcclusion() {
   const radius = Math.min(vidW, vidH) * 0.3;
   const grad = ctx.createRadialGradient(
@@ -307,6 +320,7 @@ function applyCentralOcclusion() {
   ctx.fill();
 }
 
+// retinopathy-like blotches
 function applyPatchyMask() {
   updateBlotches();
   blotches.forEach((b) => {
@@ -324,75 +338,74 @@ function applyPatchyMask() {
   });
 }
 
-// Uncorrected myopia: global softness / blur / low contrast
-function drawMyopiaFrame() {
-  ctx.filter = "blur(2px) contrast(0.8) brightness(0.95)";
-  ctx.drawImage(videoEl, 0, 0, vidW, vidH);
-  ctx.filter = "none";
+// alcohol impairment effect
+// - blur/low contrast
+// - ghosted double image from previous frame
+// - slow sway of horizon
+// - vignette
+function drawAlcoholFrame() {
+  alcoholTime += 0.016; // ~60fps step, doesn't need to be exact
+  const swayAngle = Math.sin(alcoholTime * 0.5) * 0.03; // radians ~1.7deg
+  const swayOffsetX = Math.sin(alcoholTime * 0.8) * 3;  // px wobble
+  const swayOffsetY = Math.cos(alcoholTime * 0.6) * 2;
 
-  // subtle vignette to hint "out of glasses"
-  const grad = ctx.createRadialGradient(
-    vidW / 2,
-    vidH / 2,
-    Math.min(vidW, vidH) * 0.3,
-    vidW / 2,
-    vidH / 2,
-    Math.min(vidW, vidH) * 0.7
-  );
-  grad.addColorStop(0, "rgba(0,0,0,0)");
-  grad.addColorStop(1, "rgba(0,0,0,0.4)");
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, vidW, vidH);
-}
-
-// Uncorrected hyperopia: blur in center (near focus strain)
-function drawHyperopiaFrame() {
-  // 1. draw sharp base frame
-  ctx.drawImage(videoEl, 0, 0, vidW, vidH);
-
-  // 2. overlay a blurred circle in the center to simulate
-  // "I can't focus on what's right in front of me"
-  const radius = Math.min(vidW, vidH) * 0.28;
-
-  // We'll create an offscreen canvas to draw a blurred version of the frame
+  // We'll render onto an offscreen canvas with transforms,
+  // then draw that back to main ctx for vignette/ghost.
   const off = document.createElement("canvas");
   off.width = vidW;
   off.height = vidH;
   const offCtx = off.getContext("2d");
 
-  offCtx.filter = "blur(3px) brightness(0.95) contrast(0.9)";
+  // base frame: slightly blurry / low contrast
+  offCtx.filter = "blur(2px) contrast(0.8) brightness(0.95)";
+  offCtx.save();
+  offCtx.translate(vidW / 2, vidH / 2);
+  offCtx.rotate(swayAngle);
+  offCtx.translate(-vidW / 2 + swayOffsetX, -vidH / 2 + swayOffsetY);
   offCtx.drawImage(videoEl, 0, 0, vidW, vidH);
+  offCtx.restore();
   offCtx.filter = "none";
 
-  // Now mask only the center region from that blurred version
-  ctx.save();
-  ctx.beginPath();
-  ctx.arc(vidW / 2, vidH / 2, radius, 0, Math.PI * 2);
-  ctx.closePath();
-  ctx.clip();
+  // ghost of previous frame slightly offset
+  if (lastFrameAlcohol) {
+    offCtx.save();
+    offCtx.globalAlpha = 0.25;
+    offCtx.translate(2, 2); // slight offset = double vision feel
+    offCtx.putImageData(lastFrameAlcohol, 0, 0);
+    offCtx.restore();
+  }
 
+  // draw offscreen result to main ctx
   ctx.drawImage(off, 0, 0, vidW, vidH);
-  ctx.restore();
 
-  // soft edge feather: draw translucent ring so it's not a hard cut
-  const feather = ctx.createRadialGradient(
+  // grab current frame for next time's ghost
+  lastFrameAlcohol = offCtx.getImageData(0, 0, vidW, vidH);
+
+  // vignette/darken edges
+  const vignette = ctx.createRadialGradient(
     vidW / 2,
     vidH / 2,
-    radius * 0.7,
+    Math.min(vidW, vidH) * 0.4,
     vidW / 2,
     vidH / 2,
-    radius
+    Math.min(vidW, vidH) * 0.8
   );
-  feather.addColorStop(0, "rgba(0,0,0,0)");
-  feather.addColorStop(1, "rgba(0,0,0,0.3)");
-  ctx.fillStyle = feather;
-  ctx.beginPath();
-  ctx.arc(vidW / 2, vidH / 2, radius, 0, Math.PI * 2);
-  ctx.fill();
+  vignette.addColorStop(0, "rgba(0,0,0,0)");
+  vignette.addColorStop(1, "rgba(0,0,0,0.4)");
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, vidW, vidH);
+}
+
+// helper for all colorblind modes
+function renderColorBlind(matrix) {
+  ctx.drawImage(videoEl, 0, 0, vidW, vidH);
+  const frame = ctx.getImageData(0, 0, vidW, vidH);
+  applyMatrixTransform(frame.data, matrix);
+  ctx.putImageData(frame, 0, 0);
 }
 
 // =======================================================
-// Rendering per mode
+// Per-mode render functions
 // =======================================================
 function renderNormal() {
   ctx.drawImage(videoEl, 0, 0, vidW, vidH);
@@ -421,41 +434,38 @@ function renderHaze() {
 
 function renderPatchy() {
   ctx.drawImage(videoEl, 0, 0, vidW, vidH);
-
   // slight global veil
   ctx.fillStyle = "rgba(255,255,255,0.03)";
   ctx.fillRect(0, 0, vidW, vidH);
-
   applyPatchyMask();
 }
 
-function renderColorShift() {
-  ctx.drawImage(videoEl, 0, 0, vidW, vidH);
-  let frame = ctx.getImageData(0, 0, vidW, vidH);
-  applyRedGreenShift(frame.data);
-  ctx.putImageData(frame, 0, 0);
+// color vision modes
+function renderDeuteranomaly() {
+  renderColorBlind(MAT_DEUTERANOMALY);
+}
+function renderProtanomaly() {
+  renderColorBlind(MAT_PROTANOMALY);
+}
+function renderDeuteranopia() {
+  renderColorBlind(MAT_DEUTERANOPIA);
+}
+function renderProtanopia() {
+  renderColorBlind(MAT_PROTANOPIA);
+}
+function renderTritanomaly() {
+  renderColorBlind(MAT_TRITANOMALY);
+}
+function renderTritanopia() {
+  renderColorBlind(MAT_TRITANOPIA);
 }
 
-function renderMyopia() {
-  drawMyopiaFrame();
+// alcohol impairment
+function renderAlcohol() {
+  drawAlcoholFrame();
 }
 
-function renderHyperopia() {
-  drawHyperopiaFrame();
-}
-
-function renderEdgeMap() {
-  ctx.drawImage(videoEl, 0, 0, vidW, vidH);
-  const frame = ctx.getImageData(0, 0, vidW, vidH);
-  const edged = sobelEdge(frame.data, vidW, vidH);
-  const outImg = new ImageData(edged, vidW, vidH);
-
-  ctx.fillStyle = "black";
-  ctx.fillRect(0, 0, vidW, vidH);
-  ctx.putImageData(outImg, 0, 0);
-}
-
-// dispatch
+// mode dispatcher
 function renderActiveMode() {
   switch (activeModeKey) {
     case "normal":
@@ -476,17 +486,26 @@ function renderActiveMode() {
     case "patchy":
       renderPatchy();
       break;
-    case "colorShift":
-      renderColorShift();
+    case "deuteranomaly":
+      renderDeuteranomaly();
       break;
-    case "myopia":
-      renderMyopia();
+    case "protanomaly":
+      renderProtanomaly();
       break;
-    case "hyperopia":
-      renderHyperopia();
+    case "deuteranopia":
+      renderDeuteranopia();
       break;
-    case "edge":
-      renderEdgeMap();
+    case "protanopia":
+      renderProtanopia();
+      break;
+    case "tritanomaly":
+      renderTritanomaly();
+      break;
+    case "tritanopia":
+      renderTritanopia();
+      break;
+    case "alcohol":
+      renderAlcohol();
       break;
     default:
       renderNormal();
@@ -510,6 +529,7 @@ function tick() {
 function applyMode(modeKey) {
   const mode = MODES[modeKey];
   if (!mode) return;
+
   activeModeKey = modeKey;
 
   captionTitleEl.textContent = mode.title;
@@ -517,6 +537,12 @@ function applyMode(modeKey) {
 
   modalTitleEl.textContent = mode.title;
   modalBodyEl.textContent = mode.longDescription;
+
+  // Reset alcohol ghost buffer when entering alcohol mode
+  if (modeKey === "alcohol") {
+    lastFrameAlcohol = null;
+    alcoholTime = 0;
+  }
 }
 
 function openModal() {

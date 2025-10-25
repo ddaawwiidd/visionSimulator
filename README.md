@@ -69,34 +69,34 @@ Each mode description includes the *technical approach* we use to simulate it in
 
 ### 8. Protanomaly
 
-What you see: Reduced sensitivity to red. Reds look darker, duller, less “red.”
-Why it matters: Alerts, warnings, and “red = danger” cues may not pop.
+**What you see:** Reduced sensitivity to red. Reds look darker, duller, less “red.”
+**Why it matters:** Alerts, warnings, and “red = danger” cues may not pop.
 
 
 ### 9. Deuteranopia
 
-What you see: No functional green cones. Reds and greens collapse into similar yellowish tones.
-Why it matters: Green stops being “green,” it just becomes “not-blue-ish.”
+**What you see:** No functional green cones. Reds and greens collapse into similar yellowish tones.
+**Why it matters:** Green stops being “green,” it just becomes “not-blue-ish.”
 
 
 ### 10. Protanopia
 
-What you see: No functional red cones. Reds can vanish into dark, brown, or gray.
-Why it matters: Red/green becomes almost the same signal.
+**What you see:** No functional red cones. Reds can vanish into dark, brown, or gray.
+**Why it matters:** Red/green becomes almost the same signal.
 
 
 ### 11. Tritanomaly
 
-What you see: Reduced blue sensitivity. Blues vs greens are harder to tell apart, and yellows vs reds can look off.
-Why it matters: This is rarer, but powerful to show because it breaks the mental model “color blindness is only red/green.”
+**What you see:** Reduced blue sensitivity. Blues vs greens are harder to tell apart, and yellows vs reds can look off.
+**Why it matters:** This is rarer, but powerful to show because it breaks the mental model “color blindness is only red/green.”
 
 
 ### 12. Tritanopia
 
-What you see: No functional blue cones. Blues don’t look like blue anymore; purples/yellows shift.
-Why it matters: UI using blue for “links / primary actions” becomes unreadable in the way you expect it.
+**What you see:** No functional blue cones. Blues don’t look like blue anymore; purples/yellows shift.
+**Why it matters:** UI using blue for “links / primary actions” becomes unreadable in the way you expect it.
 
 
-### 13. Predator
+### 13. Predator - fun mode
 
-What you see: Moving objects glow in “heat map” colors (purple → red → orange → yellow/white). Static background disappears.
+

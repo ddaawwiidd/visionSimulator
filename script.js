@@ -18,6 +18,66 @@ const closeModalBtnEl = document.getElementById("closeModalBtn");
 const modalTitleEl = document.getElementById("modalTitle");
 const modalBodyEl = document.getElementById("modalBody");
 
+// Install button (for prompting PWA install)
+const installBtnEl = document.getElementById("installBtn");
+
+// =======================================================
+// PWA install prompt state
+// =======================================================
+//
+// Browsers like Chrome fire `beforeinstallprompt` when the PWA meets install criteria,
+// but they suppress the default mini-infobar. We capture that event and show our own button.
+//
+let deferredInstallPrompt = null;
+
+// detect if we're already running as an installed app (standalone display)
+function isStandalone() {
+  // `display-mode: standalone` check works in most modern browsers
+  const mq = window.matchMedia("(display-mode: standalone)").matches;
+  // iOS Safari fallback: check navigator.standalone
+  const iosStandalone = window.navigator.standalone === true;
+  return mq || iosStandalone;
+}
+
+// We listen for the install prompt event and stash it
+window.addEventListener("beforeinstallprompt", (e) => {
+  // Stop the browser from showing its own mini-infobar
+  e.preventDefault();
+  deferredInstallPrompt = e;
+
+  // Only show button if not already installed
+  if (!isStandalone()) {
+    installBtnEl.classList.remove("hidden");
+  }
+});
+
+// When user taps "Install for offline use"
+if (installBtnEl) {
+  installBtnEl.addEventListener("click", async () => {
+    if (!deferredInstallPrompt) {
+      return;
+    }
+
+    // Show the browser's native install prompt
+    deferredInstallPrompt.prompt();
+
+    // We can optionally read the result, but we don't *need* it
+    await deferredInstallPrompt.userChoice;
+
+    // The prompt can only be used once
+    deferredInstallPrompt = null;
+
+    // Hide the button after attempt
+    installBtnEl.classList.add("hidden");
+  });
+}
+
+// If app is already standalone, make sure button is hidden (no install needed)
+if (isStandalone()) {
+  installBtnEl.classList.add("hidden");
+}
+
+
 // =======================================================
 // Global state
 // =======================================================
@@ -156,7 +216,7 @@ async function initCamera() {
     });
   } catch (err) {
     console.error("Camera access failed:", err);
-    // could show fallback UI message here
+    // could display a message in UI
   }
 }
 
@@ -225,7 +285,7 @@ function applyMatrixTransform(data, mat) {
   }
 }
 
-// color vision matrices (approximate educational transforms)
+// color vision matrices
 const MAT_DEUTERANOMALY = [
   [0.8, 0.2, 0.0],
   [0.258, 0.742, 0.0],
@@ -261,70 +321,50 @@ const MAT_TRITANOPIA = [
 // Predator Vision helpers
 // =======================================================
 
-// Given brightness delta, map to "thermal" RGB.
-// We'll go: dark purple -> red -> orange -> yellow/white as value increases.
+// Heat-map palette based on brightness delta
 function heatColorFromValue(v) {
-  // v is 0..255-ish difference
-  // Normalize to 0..1
-  const t = Math.min(1, v / 128); // strong diff saturates fast
-
-  // We'll approximate a colormap:
-  // 0.0 => deep purple/blue (low motion)
-  // 0.5 => red/orange
-  // 1.0 => yellow-white (high motion)
-
+  const t = Math.min(1, v / 128); // normalize and clamp 0..1
   let r, g, b;
   if (t < 0.33) {
     // purple -> red
-    // t: 0   => (40,0,80)
-    // t: .33 => (255,0,0)
     const k = t / 0.33;
     r = 40 + (255 - 40) * k;
     g = 0;
     b = 80 + (0 - 80) * k;
   } else if (t < 0.66) {
     // red -> orange/yellow
-    // t: .33 => (255,0,0)
-    // t: .66 => (255,165,0)
     const k = (t - 0.33) / 0.33;
     r = 255;
     g = 0 + (165 - 0) * k;
     b = 0;
   } else {
     // orange -> white/yellow
-    // t: .66 => (255,165,0)
-    // t: 1.0 => (255,255,180)
     const k = (t - 0.66) / 0.34;
     r = 255;
     g = 165 + (255 - 165) * k;
     b = 0 + (180 - 0) * k;
   }
-
   return [r, g, b];
 }
 
 function renderPredatorFrame() {
-  // draw current frame
   ctx.drawImage(videoEl, 0, 0, vidW, vidH);
   const curr = ctx.getImageData(0, 0, vidW, vidH);
 
   if (!prevPredatorFrame) {
-    // First frame: just dark display with faint edges
-    // We'll just threshold brightness and map to a dim heat tone
+    // first frame, just produce a faint pseudo-thermal look from brightness
     const outData = new Uint8ClampedArray(curr.data.length);
     for (let i = 0; i < curr.data.length; i += 4) {
       const r = curr.data[i];
       const g = curr.data[i + 1];
       const b = curr.data[i + 2];
       const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-
-      const [hr, hg, hb] = heatColorFromValue(lum * 0.2); // weak signal
+      const [hr, hg, hb] = heatColorFromValue(lum * 0.2);
       outData[i] = hr;
       outData[i + 1] = hg;
       outData[i + 2] = hb;
       outData[i + 3] = 255;
     }
-
     const outImg = new ImageData(outData, vidW, vidH);
     ctx.putImageData(outImg, 0, 0);
 
@@ -332,7 +372,6 @@ function renderPredatorFrame() {
     return;
   }
 
-  // Compare curr to prevPredatorFrame
   const outData = new Uint8ClampedArray(curr.data.length);
   for (let i = 0; i < curr.data.length; i += 4) {
     const r1 = curr.data[i];
@@ -343,13 +382,11 @@ function renderPredatorFrame() {
     const g0 = prevPredatorFrame.data[i + 1];
     const b0 = prevPredatorFrame.data[i + 2];
 
-    // brightness difference
     const lum1 = 0.299 * r1 + 0.587 * g1 + 0.114 * b1;
     const lum0 = 0.299 * r0 + 0.587 * g0 + 0.114 * b0;
-    const diff = Math.abs(lum1 - lum0); // 0..255-ish
+    const diff = Math.abs(lum1 - lum0); // motion = brightness delta
 
     const [hr, hg, hb] = heatColorFromValue(diff);
-
     outData[i] = hr;
     outData[i + 1] = hg;
     outData[i + 2] = hb;
@@ -357,11 +394,8 @@ function renderPredatorFrame() {
   }
 
   const outImg = new ImageData(outData, vidW, vidH);
-
-  // Paint motion/heat map
   ctx.putImageData(outImg, 0, 0);
 
-  // Store current for next frame
   prevPredatorFrame = curr;
 }
 
@@ -379,7 +413,7 @@ function drawHazeFrame() {
   ctx.fillRect(0, 0, vidW, vidH);
 }
 
-// tunnel vision
+// tunnel vision vignette
 function applyTunnelMask() {
   const radius = Math.min(vidW, vidH) * 0.4;
   const grad = ctx.createRadialGradient(
@@ -396,7 +430,7 @@ function applyTunnelMask() {
   ctx.fillRect(0, 0, vidW, vidH);
 }
 
-// central occlusion
+// central occlusion for macular degeneration-like simulation
 function applyCentralOcclusion() {
   const radius = Math.min(vidW, vidH) * 0.3;
   const grad = ctx.createRadialGradient(
@@ -415,7 +449,7 @@ function applyCentralOcclusion() {
   ctx.fill();
 }
 
-// patchy retinopathy blotches
+// patchy retinopathy occlusions
 function applyPatchyMask() {
   updateBlotches();
   blotches.forEach((b) => {
@@ -464,14 +498,14 @@ function renderHaze() {
 function renderPatchy() {
   ctx.drawImage(videoEl, 0, 0, vidW, vidH);
 
-  // faint veil to reduce clarity overall
+  // faint veil for global clarity drop
   ctx.fillStyle = "rgba(255,255,255,0.03)";
   ctx.fillRect(0, 0, vidW, vidH);
 
   applyPatchyMask();
 }
 
-// Color vision modes use shared helper
+// color vision modes
 function renderColorBlind(matrix) {
   ctx.drawImage(videoEl, 0, 0, vidW, vidH);
   const frame = ctx.getImageData(0, 0, vidW, vidH);
@@ -498,7 +532,7 @@ function renderTritanopia() {
   renderColorBlind(MAT_TRITANOPIA);
 }
 
-// Predator Vision
+// predator mode
 function renderPredator() {
   renderPredatorFrame();
 }
@@ -565,7 +599,6 @@ function applyMode(modeKey) {
   modalTitleEl.textContent = mode.title;
   modalBodyEl.textContent = mode.longDescription;
 
-  // Reset predator buffer when switching into Predator mode
   if (modeKey === "predator") {
     prevPredatorFrame = null;
   }

@@ -11,6 +11,10 @@
     <!-- Tailwind for layout/spacing/typography -->
     <script src="https://cdn.tailwindcss.com"></script>
 
+    <!-- PWA manifest -->
+    <link rel="manifest" href="manifest.webmanifest" />
+    <meta name="theme-color" content="#000000" />
+
     <link rel="stylesheet" href="styles.css" />
   </head>
 
@@ -97,8 +101,8 @@
             <option value="tritanomaly">Tritanomaly</option>
             <option value="tritanopia">Tritanopia</option>
 
-            <!-- Impairment -->
-            <option value="alcohol">Alcohol Impairment</option>
+            <!-- Fun / exploratory -->
+            <option value="cat">Cat Vision</option>
           </select>
         </div>
 
@@ -153,5 +157,14 @@
     </div>
 
     <script src="script.js"></script>
+
+    <script>
+      // Register service worker for PWA install/offline behavior
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.register("service-worker.js").catch(() => {
+          // If it fails, we just fail silently.
+        });
+      }
+    </script>
   </body>
 </html>

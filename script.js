@@ -1,7 +1,7 @@
 // script.js
 
 // =======================================================
-// DOM refs
+// DOM references
 // =======================================================
 const videoEl = document.getElementById("cameraFeed");
 const canvasEl = document.getElementById("processedView");
@@ -18,25 +18,82 @@ const closeModalBtnEl = document.getElementById("closeModalBtn");
 const modalTitleEl = document.getElementById("modalTitle");
 const modalBodyEl = document.getElementById("modalBody");
 
+// Install button (for prompting PWA install)
+const installBtnEl = document.getElementById("installBtn");
+
 // =======================================================
-// State
+// PWA install prompt state
 // =======================================================
+//
+// Browsers like Chrome fire `beforeinstallprompt` when the PWA meets install criteria,
+// but they suppress the default mini-infobar. We capture that event and show our own button.
+//
+let deferredInstallPrompt = null;
 
-// store last frame for "motion" mode
-let prevFrameData = null;
+// detect if we're already running as an installed app (standalone display)
+function isStandalone() {
+  // `display-mode: standalone` check works in most modern browsers
+  const mq = window.matchMedia("(display-mode: standalone)").matches;
+  // iOS Safari fallback: check navigator.standalone
+  const iosStandalone = window.navigator.standalone === true;
+  return mq || iosStandalone;
+}
 
-// animated blotches for patchy vision
-const blotches = createBlotches(6); // tweak count
+// We listen for the install prompt event and stash it
+window.addEventListener("beforeinstallprompt", (e) => {
+  // Stop the browser from showing its own mini-infobar
+  e.preventDefault();
+  deferredInstallPrompt = e;
 
-// active mode key
+  // Only show button if not already installed
+  if (!isStandalone()) {
+    installBtnEl.classList.remove("hidden");
+  }
+});
+
+// When user taps "Install for offline use"
+if (installBtnEl) {
+  installBtnEl.addEventListener("click", async () => {
+    if (!deferredInstallPrompt) {
+      return;
+    }
+
+    // Show the browser's native install prompt
+    deferredInstallPrompt.prompt();
+
+    // We can optionally read the result, but we don't *need* it
+    await deferredInstallPrompt.userChoice;
+
+    // The prompt can only be used once
+    deferredInstallPrompt = null;
+
+    // Hide the button after attempt
+    installBtnEl.classList.add("hidden");
+  });
+}
+
+// If app is already standalone, make sure button is hidden (no install needed)
+if (isStandalone()) {
+  installBtnEl.classList.add("hidden");
+}
+
+
+// =======================================================
+// Global state
+// =======================================================
 let activeModeKey = "normal";
 
-// camera dimensions
 let vidW = 640;
 let vidH = 480;
 
+// used in Patchy Vision (retinopathy-like occlusions)
+const blotches = createBlotches(6);
+
+// used in Predator mode (motion diff)
+let prevPredatorFrame = null;
+
 // =======================================================
-// Mode definitions
+// Mode metadata
 // =======================================================
 const MODES = {
   normal: {
@@ -57,54 +114,87 @@ const MODES = {
     title: "Tunnel Vision",
     subtitle: "Peripheral field loss similar to advanced glaucoma.",
     longDescription:
-      "Peripheral vision narrows, creating a 'tunnel' of clarity in the center. Spatial awareness and navigation become difficult.",
+      "Peripheral vision narrows, creating a 'tunnel' of clarity in the center. Spatial awareness and navigation become difficult and risky.",
   },
 
   central: {
     title: "Central Loss",
     subtitle:
-      "Simulating central blind spot (like advanced macular degeneration).",
+      "Center of gaze is obscured (like advanced macular degeneration).",
     longDescription:
-      "The center of your gaze is blurred or missing. Reading and face recognition become difficult, even if peripheral motion is still visible.",
+      "The middle of your view is blurred or missing. Reading text or recognizing faces directly ahead becomes very difficult.",
   },
 
   haze: {
     title: "Cataract / Haze",
     subtitle:
-      "Cloudy, low-contrast view with glare and bloom around lights.",
+      "Cloudy, low-contrast view with glare and blooming lights.",
     longDescription:
-      "Cataract-like haze lowers clarity and adds glare. It can feel like looking through a foggy lens where bright lights scatter.",
+      "Cataract-like haze lowers clarity and adds glare. Bright lights scatter. It can feel like looking through a fogged or dirty lens.",
   },
 
   patchy: {
     title: "Patchy Vision",
     subtitle:
-      "Dark blotches obscure parts of the scene (diabetic retinopathy-like).",
+      "Dark blotches obscure parts of the scene (retinopathy-like).",
     longDescription:
-      "Irregular dark spots partially block the view. Letters or faces can be missing in chunks, making reading and recognition very hard.",
+      "Irregular dark areas can block or distort parts of what you see. Letters or faces might be 'missing in pieces,' making recognition hard.",
   },
 
-  colorShift: {
-    title: "Red-Green Shift",
-    subtitle: "Reduced distinction between reds and greens.",
-    longDescription:
-      "In common red-green color blindness, reds and greens can appear similar. Color-coded warnings and signals become harder to interpret.",
-  },
-
-  edge: {
-    title: "Edge Map",
+  deuteranomaly: {
+    title: "Deuteranomaly",
     subtitle:
-      "Perception experiment: only high-contrast edges are visible.",
+      "Reduced green sensitivity. Green, yellow, red blend together.",
     longDescription:
-      "Your visual system relies on edges to segment objects. Here we amplify edges and discard interior detail, creating a wireframe-like world.",
+      "Deuteranomaly is the most common color vision deficiency. Greens can look dull or shift toward yellow/brown, and red-vs-green cues become less reliable.",
   },
 
-  motion: {
-    title: "Motion Only",
+  protanomaly: {
+    title: "Protanomaly",
     subtitle:
-      "Perception experiment: highlighting only moving areas.",
+      "Reduced red sensitivity. Reds look weaker and less vivid.",
     longDescription:
-      "Static background fades out while movement shows up as bright ghosts. This illustrates how attention locks onto change first.",
+      "In protanomaly, the red channel is less effective. Reds can appear darker or brownish, and differences between red and green are harder to see.",
+  },
+
+  deuteranopia: {
+    title: "Deuteranopia",
+    subtitle:
+      "No functional green cones. Red and green collapse together.",
+    longDescription:
+      "With deuteranopia, the green channel is essentially missing. Greens no longer look distinctly green; reds and greens get confused into similar tones.",
+  },
+
+  protanopia: {
+    title: "Protanopia",
+    subtitle:
+      "No functional red cones. Reds can appear dim or gray.",
+    longDescription:
+      "With protanopia, the red channel is effectively missing. Warm colors lose their 'redness' and can be mistaken for darker or duller shades.",
+  },
+
+  tritanomaly: {
+    title: "Tritanomaly",
+    subtitle:
+      "Reduced blue sensitivity. Blue/green and yellow/red get harder.",
+    longDescription:
+      "In tritanomaly, blue cones are less sensitive. Differentiating blues from greens and yellows from reds becomes more difficult.",
+  },
+
+  tritanopia: {
+    title: "Tritanopia",
+    subtitle:
+      "No functional blue cones. Blues are lost as true blue.",
+    longDescription:
+      "With tritanopia, you essentially don't get proper blue signals. Blues can shift toward greenish or grayish, and purple/yellow contrasts get distorted.",
+  },
+
+  predator: {
+    title: "Predator Vision",
+    subtitle:
+      "Motion heat-map style view. Moving objects glow.",
+    longDescription:
+      "High-motion areas are highlighted like 'heat.' Static background fades away. This is not real thermal data — it's motion/contrast exaggeration inspired by sci-fi predator vision.",
   },
 };
 
@@ -119,7 +209,6 @@ async function initCamera() {
     });
     videoEl.srcObject = stream;
 
-    // We need actual video size to size the canvas
     videoEl.addEventListener("loadedmetadata", () => {
       vidW = videoEl.videoWidth || 640;
       vidH = videoEl.videoHeight || 480;
@@ -127,7 +216,7 @@ async function initCamera() {
     });
   } catch (err) {
     console.error("Camera access failed:", err);
-    // TODO: show fallback message in UI if needed
+    // could display a message in UI
   }
 }
 
@@ -139,16 +228,15 @@ function resizeCanvas() {
 }
 
 // =======================================================
-// Helpers: blotches for "patchy vision"
+// Patchy Vision helpers
 // =======================================================
 function createBlotches(count) {
   const arr = [];
   for (let i = 0; i < count; i++) {
     arr.push({
-      // position as %, we'll convert in draw loop
       xPct: Math.random(),
       yPct: Math.random(),
-      rPct: 0.08 + Math.random() * 0.12, // radius ~8%-20% of min dimension
+      rPct: 0.08 + Math.random() * 0.12,
       dx: (Math.random() - 0.5) * 0.0005,
       dy: (Math.random() - 0.5) * 0.0005,
     });
@@ -160,51 +248,173 @@ function updateBlotches() {
   blotches.forEach((b) => {
     b.xPct += b.dx;
     b.yPct += b.dy;
-
-    // bounce off edges a bit
     if (b.xPct < 0 || b.xPct > 1) b.dx *= -1;
     if (b.yPct < 0 || b.yPct > 1) b.dy *= -1;
-
-    // clamp
     b.xPct = Math.max(0, Math.min(1, b.xPct));
     b.yPct = Math.max(0, Math.min(1, b.yPct));
   });
 }
 
 // =======================================================
-// Image processing helpers
+// Pixel transforms for grayscale and color vision matrices
 // =======================================================
-
-// convert frame to grayscale in-place
 function toGrayscale(data) {
-  // data = Uint8ClampedArray [r,g,b,a,...]
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i];
     const g = data[i + 1];
     const b = data[i + 2];
-    // luminance approx
     const gray = 0.299 * r + 0.587 * g + 0.114 * b;
     data[i] = data[i + 1] = data[i + 2] = gray;
   }
 }
 
-// cataract-like: blur is expensive to do "properly" per pixel.
-// We'll simulate haze: reduce contrast, slightly brighten, soft global blur using context filter.
+// generic matrix transform for color vision modes
+function applyMatrixTransform(data, mat) {
+  for (let i = 0; i < data.length; i += 4) {
+    const R = data[i];
+    const G = data[i + 1];
+    const B = data[i + 2];
+
+    const Rn = mat[0][0] * R + mat[0][1] * G + mat[0][2] * B;
+    const Gn = mat[1][0] * R + mat[1][1] * G + mat[1][2] * B;
+    const Bn = mat[2][0] * R + mat[2][1] * G + mat[2][2] * B;
+
+    data[i] = Rn;
+    data[i + 1] = Gn;
+    data[i + 2] = Bn;
+  }
+}
+
+// color vision matrices
+const MAT_DEUTERANOMALY = [
+  [0.8, 0.2, 0.0],
+  [0.258, 0.742, 0.0],
+  [0.0, 0.0, 1.0],
+];
+const MAT_PROTANOMALY = [
+  [0.817, 0.183, 0.0],
+  [0.333, 0.667, 0.0],
+  [0.0, 0.0, 1.0],
+];
+const MAT_DEUTERANOPIA = [
+  [0.625, 0.375, 0.0],
+  [0.7, 0.3, 0.0],
+  [0.0, 0.0, 1.0],
+];
+const MAT_PROTANOPIA = [
+  [0.567, 0.433, 0.0],
+  [0.558, 0.442, 0.0],
+  [0.0, 0.0, 1.0],
+];
+const MAT_TRITANOMALY = [
+  [1.0, 0.0, 0.0],
+  [0.0, 0.817, 0.183],
+  [0.0, 0.333, 0.667],
+];
+const MAT_TRITANOPIA = [
+  [0.95, 0.05, 0.0],
+  [0.0, 0.433, 0.567],
+  [0.0, 0.475, 0.525],
+];
+
+// =======================================================
+// Predator Vision helpers
+// =======================================================
+
+// Heat-map palette based on brightness delta
+function heatColorFromValue(v) {
+  const t = Math.min(1, v / 128); // normalize and clamp 0..1
+  let r, g, b;
+  if (t < 0.33) {
+    // purple -> red
+    const k = t / 0.33;
+    r = 40 + (255 - 40) * k;
+    g = 0;
+    b = 80 + (0 - 80) * k;
+  } else if (t < 0.66) {
+    // red -> orange/yellow
+    const k = (t - 0.33) / 0.33;
+    r = 255;
+    g = 0 + (165 - 0) * k;
+    b = 0;
+  } else {
+    // orange -> white/yellow
+    const k = (t - 0.66) / 0.34;
+    r = 255;
+    g = 165 + (255 - 165) * k;
+    b = 0 + (180 - 0) * k;
+  }
+  return [r, g, b];
+}
+
+function renderPredatorFrame() {
+  ctx.drawImage(videoEl, 0, 0, vidW, vidH);
+  const curr = ctx.getImageData(0, 0, vidW, vidH);
+
+  if (!prevPredatorFrame) {
+    // first frame, just produce a faint pseudo-thermal look from brightness
+    const outData = new Uint8ClampedArray(curr.data.length);
+    for (let i = 0; i < curr.data.length; i += 4) {
+      const r = curr.data[i];
+      const g = curr.data[i + 1];
+      const b = curr.data[i + 2];
+      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+      const [hr, hg, hb] = heatColorFromValue(lum * 0.2);
+      outData[i] = hr;
+      outData[i + 1] = hg;
+      outData[i + 2] = hb;
+      outData[i + 3] = 255;
+    }
+    const outImg = new ImageData(outData, vidW, vidH);
+    ctx.putImageData(outImg, 0, 0);
+
+    prevPredatorFrame = curr;
+    return;
+  }
+
+  const outData = new Uint8ClampedArray(curr.data.length);
+  for (let i = 0; i < curr.data.length; i += 4) {
+    const r1 = curr.data[i];
+    const g1 = curr.data[i + 1];
+    const b1 = curr.data[i + 2];
+
+    const r0 = prevPredatorFrame.data[i];
+    const g0 = prevPredatorFrame.data[i + 1];
+    const b0 = prevPredatorFrame.data[i + 2];
+
+    const lum1 = 0.299 * r1 + 0.587 * g1 + 0.114 * b1;
+    const lum0 = 0.299 * r0 + 0.587 * g0 + 0.114 * b0;
+    const diff = Math.abs(lum1 - lum0); // motion = brightness delta
+
+    const [hr, hg, hb] = heatColorFromValue(diff);
+    outData[i] = hr;
+    outData[i + 1] = hg;
+    outData[i + 2] = hb;
+    outData[i + 3] = 255;
+  }
+
+  const outImg = new ImageData(outData, vidW, vidH);
+  ctx.putImageData(outImg, 0, 0);
+
+  prevPredatorFrame = curr;
+}
+
+// =======================================================
+// Visual overlay helpers for other modes
+// =======================================================
+
+// cataract/haze
 function drawHazeFrame() {
-  // We'll cheat using canvas filters for now.
-  // 1. draw raw frame first
   ctx.filter = "blur(2px) brightness(1.1) contrast(0.6)";
   ctx.drawImage(videoEl, 0, 0, vidW, vidH);
   ctx.filter = "none";
 
-  // overlay "fog"
   ctx.fillStyle = "rgba(255,255,255,0.08)";
   ctx.fillRect(0, 0, vidW, vidH);
 }
 
-// tunnel vision: darken periphery
+// tunnel vision vignette
 function applyTunnelMask() {
-  // radial gradient transparent center -> black edges
   const radius = Math.min(vidW, vidH) * 0.4;
   const grad = ctx.createRadialGradient(
     vidW / 2,
@@ -220,10 +430,9 @@ function applyTunnelMask() {
   ctx.fillRect(0, 0, vidW, vidH);
 }
 
-// central loss: blur/obscure center only
-function applyCentralMask() {
+// central occlusion for macular degeneration-like simulation
+function applyCentralOcclusion() {
   const radius = Math.min(vidW, vidH) * 0.3;
-  // We'll draw a blurred-ish circle by drawing a semi-opaque gray circle
   const grad = ctx.createRadialGradient(
     vidW / 2,
     vidH / 2,
@@ -240,11 +449,9 @@ function applyCentralMask() {
   ctx.fill();
 }
 
-// patchy vision: draw random blotches
+// patchy retinopathy occlusions
 function applyPatchyMask() {
   updateBlotches();
-  ctx.save();
-  ctx.fillStyle = "rgba(0,0,0,0.6)";
   blotches.forEach((b) => {
     const x = b.xPct * vidW;
     const y = b.yPct * vidH;
@@ -258,152 +465,18 @@ function applyPatchyMask() {
     ctx.arc(x, y, r, 0, Math.PI * 2);
     ctx.fill();
   });
-  ctx.restore();
-}
-
-// red-green shift approximation
-// We'll aggressively reduce difference between R and G.
-// Note: super simplified protan/deutan mashup just to get the idea.
-function applyRedGreenShift(data) {
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
-
-    // collapse r/g toward their average, keep blue mostly
-    const avgRG = (r + g) / 2;
-    data[i] = avgRG; // R channel
-    data[i + 1] = avgRG * 0.9; // G channel slightly biased
-    data[i + 2] = b; // keep blue for differentiation
-  }
-}
-
-// edge map (Sobel)
-// We'll work on grayscale first, then compute edges, then draw result back.
-function sobelEdge(data, w, h) {
-  // data: Uint8ClampedArray (RGBA)
-  // We'll first build a gray buffer
-  const gray = new Float32Array(w * h);
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
-    const y = 0.299 * r + 0.587 * g + 0.114 * b;
-    gray[i / 4] = y;
-  }
-
-  // Sobel kernels
-  const gxKernel = [-1, 0, 1, -2, 0, 2, -1, 0, 1];
-  const gyKernel = [-1, -2, -1, 0, 0, 0, 1, 2, 1];
-
-  const out = new Uint8ClampedArray(w * h * 4);
-
-  // avoid outer border to keep it simple
-  for (let y = 1; y < h - 1; y++) {
-    for (let x = 1; x < w - 1; x++) {
-      // index in gray
-      const idx = y * w + x;
-
-      // sample neighborhood
-      // row above
-      const p00 = gray[idx - w - 1];
-      const p01 = gray[idx - w];
-      const p02 = gray[idx - w + 1];
-      // row mid
-      const p10 = gray[idx - 1];
-      const p11 = gray[idx];
-      const p12 = gray[idx + 1];
-      // row below
-      const p20 = gray[idx + w - 1];
-      const p21 = gray[idx + w];
-      const p22 = gray[idx + w + 1];
-
-      // Gx
-      const gx =
-        p00 * gxKernel[0] +
-        p01 * gxKernel[1] +
-        p02 * gxKernel[2] +
-        p10 * gxKernel[3] +
-        p11 * gxKernel[4] +
-        p12 * gxKernel[5] +
-        p20 * gxKernel[6] +
-        p21 * gxKernel[7] +
-        p22 * gxKernel[8];
-
-      // Gy
-      const gy =
-        p00 * gyKernel[0] +
-        p01 * gyKernel[1] +
-        p02 * gyKernel[2] +
-        p10 * gyKernel[3] +
-        p11 * gyKernel[4] +
-        p12 * gyKernel[5] +
-        p20 * gyKernel[6] +
-        p21 * gyKernel[7] +
-        p22 * gyKernel[8];
-
-      // edge magnitude
-      const mag = Math.sqrt(gx * gx + gy * gy);
-
-      // normalize-ish
-      const edgeVal = mag > 100 ? 255 : 0;
-
-      const o = idx * 4;
-      out[o] = edgeVal; // R
-      out[o + 1] = edgeVal; // G
-      out[o + 2] = edgeVal; // B
-      out[o + 3] = 255; // A
-    }
-  }
-
-  return out;
-}
-
-// motion-only: compare current frame to prevFrameData.
-// show white where difference is large, else black.
-function motionMask(curr, prev, threshold = 30) {
-  const out = new Uint8ClampedArray(curr.length);
-  for (let i = 0; i < curr.length; i += 4) {
-    // brightness of current vs prev
-    const cr = curr[i],
-      cg = curr[i + 1],
-      cb = curr[i + 2];
-    const pr = prev[i],
-      pg = prev[i + 1],
-      pb = prev[i + 2];
-
-    const cLum = 0.299 * cr + 0.587 * cg + 0.114 * cb;
-    const pLum = 0.299 * pr + 0.587 * pg + 0.114 * pb;
-
-    const diff = Math.abs(cLum - pLum);
-
-    if (diff > threshold) {
-      out[i] = 255;
-      out[i + 1] = 255;
-      out[i + 2] = 255;
-      out[i + 3] = 255;
-    } else {
-      out[i] = 0;
-      out[i + 1] = 0;
-      out[i + 2] = 0;
-      out[i + 3] = 255;
-    }
-  }
-  return out;
 }
 
 // =======================================================
-// Rendering per mode
+// Per-mode render functions
 // =======================================================
-
 function renderNormal() {
-  // Just draw the live frame as-is
   ctx.drawImage(videoEl, 0, 0, vidW, vidH);
 }
 
 function renderNoColor() {
   ctx.drawImage(videoEl, 0, 0, vidW, vidH);
-  let frame = ctx.getImageData(0, 0, vidW, vidH);
+  const frame = ctx.getImageData(0, 0, vidW, vidH);
   toGrayscale(frame.data);
   ctx.putImageData(frame, 0, 0);
 }
@@ -415,7 +488,7 @@ function renderTunnel() {
 
 function renderCentralLoss() {
   ctx.drawImage(videoEl, 0, 0, vidW, vidH);
-  applyCentralMask();
+  applyCentralOcclusion();
 }
 
 function renderHaze() {
@@ -425,96 +498,87 @@ function renderHaze() {
 function renderPatchy() {
   ctx.drawImage(videoEl, 0, 0, vidW, vidH);
 
-  // Slight global softening to hint lower contrast
+  // faint veil for global clarity drop
   ctx.fillStyle = "rgba(255,255,255,0.03)";
   ctx.fillRect(0, 0, vidW, vidH);
 
   applyPatchyMask();
 }
 
-function renderColorShift() {
+// color vision modes
+function renderColorBlind(matrix) {
   ctx.drawImage(videoEl, 0, 0, vidW, vidH);
-  let frame = ctx.getImageData(0, 0, vidW, vidH);
-  applyRedGreenShift(frame.data);
+  const frame = ctx.getImageData(0, 0, vidW, vidH);
+  applyMatrixTransform(frame.data, matrix);
   ctx.putImageData(frame, 0, 0);
 }
 
-function renderEdgeMap() {
-  ctx.drawImage(videoEl, 0, 0, vidW, vidH);
-  const frame = ctx.getImageData(0, 0, vidW, vidH);
-  const edged = sobelEdge(frame.data, vidW, vidH);
-  const outImg = new ImageData(edged, vidW, vidH);
-
-  // Black background first
-  ctx.fillStyle = "black";
-  ctx.fillRect(0, 0, vidW, vidH);
-
-  ctx.putImageData(outImg, 0, 0);
+function renderDeuteranomaly() {
+  renderColorBlind(MAT_DEUTERANOMALY);
+}
+function renderProtanomaly() {
+  renderColorBlind(MAT_PROTANOMALY);
+}
+function renderDeuteranopia() {
+  renderColorBlind(MAT_DEUTERANOPIA);
+}
+function renderProtanopia() {
+  renderColorBlind(MAT_PROTANOPIA);
+}
+function renderTritanomaly() {
+  renderColorBlind(MAT_TRITANOMALY);
+}
+function renderTritanopia() {
+  renderColorBlind(MAT_TRITANOPIA);
 }
 
-function renderMotionOnly() {
-  ctx.drawImage(videoEl, 0, 0, vidW, vidH);
-  const frame = ctx.getImageData(0, 0, vidW, vidH);
-
-  if (!prevFrameData) {
-    // first frame: just store and draw black
-    prevFrameData = new Uint8ClampedArray(frame.data);
-    ctx.fillStyle = "black";
-    ctx.fillRect(0, 0, vidW, vidH);
-    return;
-  }
-
-  const motionImg = motionMask(frame.data, prevFrameData, 30);
-  const outImg = new ImageData(motionImg, vidW, vidH);
-
-  ctx.putImageData(outImg, 0, 0);
-
-  // update prev
-  prevFrameData.set(frame.data);
+// predator mode
+function renderPredator() {
+  renderPredatorFrame();
 }
 
-// dispatcher
+// dispatch by mode
 function renderActiveMode() {
   switch (activeModeKey) {
     case "normal":
-      renderNormal();
-      break;
+      renderNormal(); break;
     case "noColor":
-      renderNoColor();
-      break;
+      renderNoColor(); break;
     case "tunnel":
-      renderTunnel();
-      break;
+      renderTunnel(); break;
     case "central":
-      renderCentralLoss();
-      break;
+      renderCentralLoss(); break;
     case "haze":
-      renderHaze();
-      break;
+      renderHaze(); break;
     case "patchy":
-      renderPatchy();
-      break;
-    case "colorShift":
-      renderColorShift();
-      break;
-    case "edge":
-      renderEdgeMap();
-      break;
-    case "motion":
-      renderMotionOnly();
-      break;
+      renderPatchy(); break;
+
+    case "deuteranomaly":
+      renderDeuteranomaly(); break;
+    case "protanomaly":
+      renderProtanomaly(); break;
+    case "deuteranopia":
+      renderDeuteranopia(); break;
+    case "protanopia":
+      renderProtanopia(); break;
+    case "tritanomaly":
+      renderTritanomaly(); break;
+    case "tritanopia":
+      renderTritanopia(); break;
+
+    case "predator":
+      renderPredator(); break;
+
     default:
-      renderNormal();
-      break;
+      renderNormal(); break;
   }
 }
 
 // =======================================================
-// Main animation loop
+// Animation loop
 // =======================================================
 function tick() {
   if (videoEl.readyState >= 2) {
-    // We only draw when video has data
     renderActiveMode();
   }
   requestAnimationFrame(tick);
@@ -529,28 +593,26 @@ function applyMode(modeKey) {
 
   activeModeKey = modeKey;
 
-  // update caption + modal text
   captionTitleEl.textContent = mode.title;
   captionSubtitleEl.textContent = mode.subtitle;
+
   modalTitleEl.textContent = mode.title;
   modalBodyEl.textContent = mode.longDescription;
 
-  // reset prev frame for motion mode when switching into it
-  if (modeKey === "motion") {
-    prevFrameData = null;
+  if (modeKey === "predator") {
+    prevPredatorFrame = null;
   }
 }
 
 function openModal() {
   infoModalEl.classList.remove("hidden");
 }
-
 function closeModal() {
   infoModalEl.classList.add("hidden");
 }
 
 // =======================================================
-// Event listeners
+// Events
 // =======================================================
 modeSelectEl.addEventListener("change", (e) => {
   applyMode(e.target.value);
@@ -559,7 +621,6 @@ modeSelectEl.addEventListener("change", (e) => {
 infoButtonEl.addEventListener("click", openModal);
 closeModalBtnEl.addEventListener("click", closeModal);
 
-// close modal on backdrop tap
 infoModalEl.addEventListener("click", (e) => {
   if (e.target === infoModalEl) closeModal();
 });

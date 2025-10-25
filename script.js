@@ -26,8 +26,11 @@ let activeModeKey = "normal";
 let vidW = 640;
 let vidH = 480;
 
-// used in patchy vision (diabetic retinopathy–like)
+// used in Patchy Vision (retinopathy-like occlusions)
 const blotches = createBlotches(6);
+
+// used in Predator mode (motion diff)
+let prevPredatorFrame = null;
 
 // =======================================================
 // Mode metadata
@@ -126,12 +129,12 @@ const MODES = {
       "With tritanopia, you essentially don't get proper blue signals. Blues can shift toward greenish or grayish, and purple/yellow contrasts get distorted.",
   },
 
-  cat: {
-    title: "Cat Vision",
+  predator: {
+    title: "Predator Vision",
     subtitle:
-      "Dim-world boost, muted colors, softer detail.",
+      "Motion heat-map style view. Moving objects glow.",
     longDescription:
-      "Cats see better in low light, but with less color variety and less sharp detail. This mode brightens shadows, reduces fine resolution, and shifts color toward a cooler blue/green range.",
+      "High-motion areas are highlighted like 'heat.' Static background fades away. This is not real thermal data — it's motion/contrast exaggeration inspired by sci-fi predator vision.",
   },
 };
 
@@ -153,7 +156,7 @@ async function initCamera() {
     });
   } catch (err) {
     console.error("Camera access failed:", err);
-    // could display a user-friendly message here
+    // could show fallback UI message here
   }
 }
 
@@ -165,7 +168,7 @@ function resizeCanvas() {
 }
 
 // =======================================================
-// Patchy vision helpers
+// Patchy Vision helpers
 // =======================================================
 function createBlotches(count) {
   const arr = [];
@@ -193,7 +196,7 @@ function updateBlotches() {
 }
 
 // =======================================================
-// Pixel transforms
+// Pixel transforms for grayscale and color vision matrices
 // =======================================================
 function toGrayscale(data) {
   for (let i = 0; i < data.length; i += 4) {
@@ -222,64 +225,148 @@ function applyMatrixTransform(data, mat) {
   }
 }
 
-// color vision simulation matrices (approximate, educational only)
+// color vision matrices (approximate educational transforms)
 const MAT_DEUTERANOMALY = [
   [0.8, 0.2, 0.0],
   [0.258, 0.742, 0.0],
   [0.0, 0.0, 1.0],
 ];
-
 const MAT_PROTANOMALY = [
   [0.817, 0.183, 0.0],
   [0.333, 0.667, 0.0],
   [0.0, 0.0, 1.0],
 ];
-
 const MAT_DEUTERANOPIA = [
   [0.625, 0.375, 0.0],
   [0.7, 0.3, 0.0],
   [0.0, 0.0, 1.0],
 ];
-
 const MAT_PROTANOPIA = [
   [0.567, 0.433, 0.0],
   [0.558, 0.442, 0.0],
   [0.0, 0.0, 1.0],
 ];
-
 const MAT_TRITANOMALY = [
   [1.0, 0.0, 0.0],
   [0.0, 0.817, 0.183],
   [0.0, 0.333, 0.667],
 ];
-
 const MAT_TRITANOPIA = [
   [0.95, 0.05, 0.0],
   [0.0, 0.433, 0.567],
   [0.0, 0.475, 0.525],
 ];
 
-// "Cat Vision": boost low-light feel, mute reds, slight blur, cool tint.
-function applyCatTransform(data) {
-  for (let i = 0; i < data.length; i += 4) {
-    const R = data[i];
-    const G = data[i + 1];
-    const B = data[i + 2];
+// =======================================================
+// Predator Vision helpers
+// =======================================================
 
-    // reduce red channel influence, boost green/blue a bit
-    // also slightly boost brightness overall
-    const Rn = (R * 0.5 + G * 0.2 + B * 0.1) * 1.1;
-    const Gn = (R * 0.2 + G * 0.8 + B * 0.2) * 1.1;
-    const Bn = (R * 0.1 + G * 0.3 + B * 0.9) * 1.1;
+// Given brightness delta, map to "thermal" RGB.
+// We'll go: dark purple -> red -> orange -> yellow/white as value increases.
+function heatColorFromValue(v) {
+  // v is 0..255-ish difference
+  // Normalize to 0..1
+  const t = Math.min(1, v / 128); // strong diff saturates fast
 
-    data[i] = Rn;
-    data[i + 1] = Gn;
-    data[i + 2] = Bn;
+  // We'll approximate a colormap:
+  // 0.0 => deep purple/blue (low motion)
+  // 0.5 => red/orange
+  // 1.0 => yellow-white (high motion)
+
+  let r, g, b;
+  if (t < 0.33) {
+    // purple -> red
+    // t: 0   => (40,0,80)
+    // t: .33 => (255,0,0)
+    const k = t / 0.33;
+    r = 40 + (255 - 40) * k;
+    g = 0;
+    b = 80 + (0 - 80) * k;
+  } else if (t < 0.66) {
+    // red -> orange/yellow
+    // t: .33 => (255,0,0)
+    // t: .66 => (255,165,0)
+    const k = (t - 0.33) / 0.33;
+    r = 255;
+    g = 0 + (165 - 0) * k;
+    b = 0;
+  } else {
+    // orange -> white/yellow
+    // t: .66 => (255,165,0)
+    // t: 1.0 => (255,255,180)
+    const k = (t - 0.66) / 0.34;
+    r = 255;
+    g = 165 + (255 - 165) * k;
+    b = 0 + (180 - 0) * k;
   }
+
+  return [r, g, b];
+}
+
+function renderPredatorFrame() {
+  // draw current frame
+  ctx.drawImage(videoEl, 0, 0, vidW, vidH);
+  const curr = ctx.getImageData(0, 0, vidW, vidH);
+
+  if (!prevPredatorFrame) {
+    // First frame: just dark display with faint edges
+    // We'll just threshold brightness and map to a dim heat tone
+    const outData = new Uint8ClampedArray(curr.data.length);
+    for (let i = 0; i < curr.data.length; i += 4) {
+      const r = curr.data[i];
+      const g = curr.data[i + 1];
+      const b = curr.data[i + 2];
+      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+
+      const [hr, hg, hb] = heatColorFromValue(lum * 0.2); // weak signal
+      outData[i] = hr;
+      outData[i + 1] = hg;
+      outData[i + 2] = hb;
+      outData[i + 3] = 255;
+    }
+
+    const outImg = new ImageData(outData, vidW, vidH);
+    ctx.putImageData(outImg, 0, 0);
+
+    prevPredatorFrame = curr;
+    return;
+  }
+
+  // Compare curr to prevPredatorFrame
+  const outData = new Uint8ClampedArray(curr.data.length);
+  for (let i = 0; i < curr.data.length; i += 4) {
+    const r1 = curr.data[i];
+    const g1 = curr.data[i + 1];
+    const b1 = curr.data[i + 2];
+
+    const r0 = prevPredatorFrame.data[i];
+    const g0 = prevPredatorFrame.data[i + 1];
+    const b0 = prevPredatorFrame.data[i + 2];
+
+    // brightness difference
+    const lum1 = 0.299 * r1 + 0.587 * g1 + 0.114 * b1;
+    const lum0 = 0.299 * r0 + 0.587 * g0 + 0.114 * b0;
+    const diff = Math.abs(lum1 - lum0); // 0..255-ish
+
+    const [hr, hg, hb] = heatColorFromValue(diff);
+
+    outData[i] = hr;
+    outData[i + 1] = hg;
+    outData[i + 2] = hb;
+    outData[i + 3] = 255;
+  }
+
+  const outImg = new ImageData(outData, vidW, vidH);
+
+  // Paint motion/heat map
+  ctx.putImageData(outImg, 0, 0);
+
+  // Store current for next frame
+  prevPredatorFrame = curr;
 }
 
 // =======================================================
-// Visual overlay helpers
+// Visual overlay helpers for other modes
 // =======================================================
 
 // cataract/haze
@@ -309,7 +396,7 @@ function applyTunnelMask() {
   ctx.fillRect(0, 0, vidW, vidH);
 }
 
-// central blind/blurred spot
+// central occlusion
 function applyCentralOcclusion() {
   const radius = Math.min(vidW, vidH) * 0.3;
   const grad = ctx.createRadialGradient(
@@ -328,7 +415,7 @@ function applyCentralOcclusion() {
   ctx.fill();
 }
 
-// patchy retinopathy-style occlusions
+// patchy retinopathy blotches
 function applyPatchyMask() {
   updateBlotches();
   blotches.forEach((b) => {
@@ -346,42 +433,6 @@ function applyPatchyMask() {
   });
 }
 
-// Cat Vision renderer helper (blur + tint + slight vignette)
-function drawCatFrame() {
-  // First draw a slightly blurred, low-acuity frame
-  const off = document.createElement("canvas");
-  off.width = vidW;
-  off.height = vidH;
-  const offCtx = off.getContext("2d");
-
-  // Cat acuity is lower than humans -> blur a bit
-  offCtx.filter = "blur(2px) brightness(1.1) contrast(0.9)";
-  offCtx.drawImage(videoEl, 0, 0, vidW, vidH);
-  offCtx.filter = "none";
-
-  // Grab pixels, shift toward blue/green, mute reds
-  let frame = offCtx.getImageData(0, 0, vidW, vidH);
-  applyCatTransform(frame.data);
-  offCtx.putImageData(frame, 0, 0);
-
-  // Draw processed frame to main canvas
-  ctx.drawImage(off, 0, 0, vidW, vidH);
-
-  // Mild twilight-style vignette (cats are crepuscular hunters)
-  const vignette = ctx.createRadialGradient(
-    vidW / 2,
-    vidH / 2,
-    Math.min(vidW, vidH) * 0.4,
-    vidW / 2,
-    vidH / 2,
-    Math.min(vidW, vidH) * 0.8
-  );
-  vignette.addColorStop(0, "rgba(0,0,0,0)");
-  vignette.addColorStop(1, "rgba(0,0,0,0.3)");
-  ctx.fillStyle = vignette;
-  ctx.fillRect(0, 0, vidW, vidH);
-}
-
 // =======================================================
 // Per-mode render functions
 // =======================================================
@@ -391,7 +442,7 @@ function renderNormal() {
 
 function renderNoColor() {
   ctx.drawImage(videoEl, 0, 0, vidW, vidH);
-  let frame = ctx.getImageData(0, 0, vidW, vidH);
+  const frame = ctx.getImageData(0, 0, vidW, vidH);
   toGrayscale(frame.data);
   ctx.putImageData(frame, 0, 0);
 }
@@ -413,14 +464,21 @@ function renderHaze() {
 function renderPatchy() {
   ctx.drawImage(videoEl, 0, 0, vidW, vidH);
 
-  // slight milkiness to drop clarity a touch
+  // faint veil to reduce clarity overall
   ctx.fillStyle = "rgba(255,255,255,0.03)";
   ctx.fillRect(0, 0, vidW, vidH);
 
   applyPatchyMask();
 }
 
-// Color deficiency modes: reuse a generic renderer
+// Color vision modes use shared helper
+function renderColorBlind(matrix) {
+  ctx.drawImage(videoEl, 0, 0, vidW, vidH);
+  const frame = ctx.getImageData(0, 0, vidW, vidH);
+  applyMatrixTransform(frame.data, matrix);
+  ctx.putImageData(frame, 0, 0);
+}
+
 function renderDeuteranomaly() {
   renderColorBlind(MAT_DEUTERANOMALY);
 }
@@ -440,16 +498,9 @@ function renderTritanopia() {
   renderColorBlind(MAT_TRITANOPIA);
 }
 
-function renderColorBlind(matrix) {
-  ctx.drawImage(videoEl, 0, 0, vidW, vidH);
-  const frame = ctx.getImageData(0, 0, vidW, vidH);
-  applyMatrixTransform(frame.data, matrix);
-  ctx.putImageData(frame, 0, 0);
-}
-
-// Cat Vision mode
-function renderCat() {
-  drawCatFrame();
+// Predator Vision
+function renderPredator() {
+  renderPredatorFrame();
 }
 
 // dispatch by mode
@@ -481,8 +532,8 @@ function renderActiveMode() {
     case "tritanopia":
       renderTritanopia(); break;
 
-    case "cat":
-      renderCat(); break;
+    case "predator":
+      renderPredator(); break;
 
     default:
       renderNormal(); break;
@@ -513,6 +564,11 @@ function applyMode(modeKey) {
 
   modalTitleEl.textContent = mode.title;
   modalBodyEl.textContent = mode.longDescription;
+
+  // Reset predator buffer when switching into Predator mode
+  if (modeKey === "predator") {
+    prevPredatorFrame = null;
+  }
 }
 
 function openModal() {

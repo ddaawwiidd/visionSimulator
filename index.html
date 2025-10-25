@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-black">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <title>See Through Other Eyes</title>
+
+    <!-- Tailwind for layout/spacing/typography -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+
+  <body class="h-full w-full bg-black text-white overflow-hidden relative">
+    <main class="h-full w-full relative">
+      <!-- Raw camera feed (used directly for some modes and also as source for canvas modes) -->
+      <video
+        id="cameraFeed"
+        class="absolute inset-0 h-full w-full object-cover"
+        autoplay
+        playsinline
+        muted
+      ></video>
+
+      <!-- Processed canvas output (for pixel manipulation modes) -->
+      <canvas
+        id="processedView"
+        class="absolute inset-0 h-full w-full object-cover"
+      ></canvas>
+
+      <!-- Top/bottom gradients to make text readable -->
+      <div
+        class="pointer-events-none absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-black/70 via-black/20 to-transparent"
+      ></div>
+      <div
+        class="pointer-events-none absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/80 via-black/30 to-transparent"
+      ></div>
+
+      <!-- Top: caption / explanation -->
+      <section
+        id="modeCaption"
+        class="absolute top-6 left-1/2 -translate-x-1/2 max-w-[90%] text-center"
+      >
+        <button
+          id="infoButton"
+          class="px-4 py-2 bg-black/60 backdrop-blur-md rounded-xl border border-white/20 text-[0.9rem] leading-snug text-white/90 font-medium shadow-lg shadow-black/60 active:scale-[0.98] transition"
+        >
+          <span
+            id="captionTitle"
+            class="block font-semibold text-white"
+          >
+            Normal vision
+          </span>
+          <span
+            id="captionSubtitle"
+            class="block text-white/70 text-[0.8rem] font-normal"
+          >
+            Standard camera view, full color and no distortion.
+          </span>
+        </button>
+      </section>
+
+      <!-- Bottom: mode selector + safety line -->
+      <footer
+        class="absolute bottom-4 left-0 right-0 flex flex-col items-center gap-3 px-4"
+      >
+        <div
+          class="w-full max-w-[320px] bg-black/60 backdrop-blur-md rounded-2xl border border-white/15 shadow-lg shadow-black/70 px-4 py-3 flex flex-col items-center"
+        >
+          <label
+            for="modeSelect"
+            class="block text-xs text-white/70 mb-1 tracking-wide"
+          >
+            Select vision mode
+          </label>
+
+          <select
+            id="modeSelect"
+            class="w-full bg-black/50 text-white text-sm border border-white/20 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-white/30"
+          >
+            <option value="normal">Normal</option>
+            <option value="noColor">No Color</option>
+            <option value="tunnel">Tunnel Vision</option>
+            <option value="central">Central Loss</option>
+            <option value="haze">Cataract / Haze</option>
+            <option value="patchy">Patchy Vision</option>
+            <option value="colorShift">Red-Green Shift</option>
+            <option value="edge">Edge Map</option>
+            <option value="motion">Motion Only</option>
+          </select>
+        </div>
+
+        <p
+          id="disclaimer"
+          class="text-[0.7rem] text-white/50 text-center leading-tight max-w-[320px] font-light"
+        >
+          ⚠ Do not rely on this view for movement, driving, or navigation.
+          Educational simulation only.
+        </p>
+      </footer>
+    </main>
+
+    <!-- Info modal -->
+    <div
+      id="infoModal"
+      class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-6 z-50"
+    >
+      <div
+        class="w-full max-w-sm bg-zinc-900 rounded-2xl border border-white/10 p-5 text-white shadow-2xl shadow-black/80 flex flex-col"
+      >
+        <header class="flex items-start justify-between mb-3">
+          <h2
+            id="modalTitle"
+            class="text-base font-semibold text-white"
+          >
+            Normal vision
+          </h2>
+          <button
+            id="closeModalBtn"
+            class="text-white/50 text-sm px-2 py-1 rounded-md bg-white/10 border border-white/20"
+          >
+            Close
+          </button>
+        </header>
+
+        <p
+          id="modalBody"
+          class="text-sm text-white/80 leading-relaxed"
+        >
+          This is the standard camera feed with no simulation applied. It
+          functions as your baseline for comparison.
+        </p>
+
+        <p
+          class="text-[0.7rem] text-white/50 leading-snug mt-4"
+        >
+          This tool is an empathy aid, not a diagnosis.
+        </p>
+      </div>
+    </div>
+
+    <script src="script.js"></script>
+  </body>
+</html>

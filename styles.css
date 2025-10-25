@@ -1,0 +1,28 @@
+/* styles.css */
+
+/* Hide scrollbars in case we reintroduce horizontal scrolling UI later */
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+/* Smooth fade helpers if you want to animate visibility changes */
+.fade-in {
+  opacity: 1;
+  transition: opacity 0.3s ease;
+}
+.fade-out {
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+/* Safe areas for iOS home indicator / notch if needed */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.safe-top {
+  padding-top: env(safe-area-inset-top);
+}

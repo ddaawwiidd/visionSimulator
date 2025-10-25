@@ -16,7 +16,7 @@
 
   <body class="h-full w-full bg-black text-white overflow-hidden relative">
     <main class="h-full w-full relative">
-      <!-- Raw camera feed (used directly for some modes and also as source for canvas modes) -->
+      <!-- Camera feed (source for all modes) -->
       <video
         id="cameraFeed"
         class="absolute inset-0 h-full w-full object-cover"
@@ -25,13 +25,13 @@
         muted
       ></video>
 
-      <!-- Processed canvas output (for pixel manipulation modes) -->
+      <!-- Canvas where we render effects -->
       <canvas
         id="processedView"
         class="absolute inset-0 h-full w-full object-cover"
       ></canvas>
 
-      <!-- Top/bottom gradients to make text readable -->
+      <!-- Overlays to make text readable -->
       <div
         class="pointer-events-none absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-black/70 via-black/20 to-transparent"
       ></div>
@@ -39,7 +39,7 @@
         class="pointer-events-none absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/80 via-black/30 to-transparent"
       ></div>
 
-      <!-- Top: caption / explanation -->
+      <!-- Caption / mode description -->
       <section
         id="modeCaption"
         class="absolute top-6 left-1/2 -translate-x-1/2 max-w-[90%] text-center"
@@ -63,7 +63,7 @@
         </button>
       </section>
 
-      <!-- Bottom: mode selector + safety line -->
+      <!-- Bottom controls -->
       <footer
         class="absolute bottom-4 left-0 right-0 flex flex-col items-center gap-3 px-4"
       >
@@ -88,8 +88,9 @@
             <option value="haze">Cataract / Haze</option>
             <option value="patchy">Patchy Vision</option>
             <option value="colorShift">Red-Green Shift</option>
+            <option value="myopia">Uncorrected Myopia</option>
+            <option value="hyperopia">Uncorrected Hyperopia</option>
             <option value="edge">Edge Map</option>
-            <option value="motion">Motion Only</option>
           </select>
         </div>
 
